@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#050816" />
+  <title>SRIIVERSEAI — Building Intelligent Software That Solves Real Problems</title>
+  <meta name="description" content="SRIIVERSEAI is the digital headquarters of Sudhanshu Sinha — a Python backend engineer, AI developer and full-stack engineer building intelligent software that solves real-world problems." />
+  <meta name="author" content="Sudhanshu Sinha" />
+  <meta name="robots" content="index, follow" />
+  <!-- PLACEHOLDER domain — mirrors PROFILE.siteUrl in src/content.js. Replace
+       both once a real domain is deployed (see README.md placeholders table). -->
+  <link rel="canonical" href="https://sriiverseai.dev/" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="SRIIVERSEAI — Building Intelligent Software That Solves Real Problems" />
+  <meta property="og:description" content="AI products, scalable backend systems, and modern web applications engineered to solve real-world problems." />
+  <meta property="og:url" content="https://sriiverseai.dev/" />
+  <!-- No real OG preview image asset exists yet — reusing the existing
+       inline SVG favicon (data URI) rather than fabricating an image file. -->
+  <meta property="og:image" content="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236C63FF'/%3E%3Cstop offset='1' stop-color='%2338BDF8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='24' fill='%230B1120'/%3E%3Ctext x='50' y='50' font-family='monospace' font-size='58' font-weight='700' fill='url(%23g)' text-anchor='middle' dominant-baseline='central'%3ES%3C/text%3E%3C/svg%3E" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="SRIIVERSEAI — Building Intelligent Software That Solves Real Problems" />
+  <meta name="twitter:description" content="AI products, scalable backend systems, and modern web applications engineered to solve real-world problems." />
+  <meta name="twitter:creator" content="@sriiverse" />
+
+  <!-- JSON-LD: Person + WebSite (mirrors PROFILE in src/content.js) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Person",
+        "name": "Sudhanshu Sinha",
+        "url": "https://sriiverseai.dev/",
+        "jobTitle": "Python Backend Engineer · AI Developer · Full-Stack Engineer",
+        "email": "mailto:sudhanshutheking183@gmail.com",
+        "sameAs": [
+          "https://github.com/sriiverse",
+          "https://www.linkedin.com/in/sudhanshu-sinha-4619a429a/"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "name": "SRIIVERSEAI",
+        "url": "https://sriiverseai.dev/"
+      }
+    ]
+  }
+  </script>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="./src/styles.css" />
+
+  <!-- Favicon (inline SVG: holographic S) -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236C63FF'/%3E%3Cstop offset='1' stop-color='%2338BDF8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='24' fill='%230B1120'/%3E%3Ctext x='50' y='50' font-family='monospace' font-size='58' font-weight='700' fill='url(%23g)' text-anchor='middle' dominant-baseline='central'%3ES%3C/text%3E%3C/svg%3E" />
+
+  <!-- Import map: Three.js as ESM -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <!-- GSAP (global) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+  <!-- Lenis smooth scroll (global) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/@studio-freight/lenis@1.0.42/dist/lenis.min.js"></script>
+</head>
+<body>
+  <a href="#view" class="skip-link">Skip to content</a>
+
+  <!-- ======================= LOADER ======================= -->
+  <div class="loader" id="loader" aria-hidden="true">
+    <div class="loader__core">
+      <div class="loader__sigil">S</div>
+      <div class="loader__bar"><span></span></div>
+      <div class="loader__label">Initializing SRIIVERSE<span class="blink">_</span></div>
+    </div>
+  </div>
+
+  <!-- ======================= CURSOR ======================= -->
+  <div class="cursor" id="cursor" aria-hidden="true">
+    <div class="cursor__dot"></div>
+    <div class="cursor__ring"></div>
+  </div>
+  <div class="cursor-light" id="cursorLight" aria-hidden="true"></div>
+
+  <!-- ======================= 3D SCENE CANVAS ======================= -->
+  <canvas id="scene" class="scene" aria-hidden="true"></canvas>
+  <div class="scene__veil" aria-hidden="true"></div>
+  <div class="grid-floor" aria-hidden="true"></div>
+
+  <!-- ======================= NOISE / GRAIN ======================= -->
+  <div class="grain" aria-hidden="true"></div>
+
+  <!-- ======================= NAV ======================= -->
+  <header class="nav" id="nav">
+    <a href="#hero" class="nav__brand" data-cursor="link" aria-label="SRIIVERSEAI home">
+      <span class="nav__brand-row">
+        <span class="nav__brand-sigil">S</span>
+        <span class="nav__brand-text">SRIIVERSE<span class="nav__brand-accent">AI</span></span>
+      </span>
+      <span class="nav__brand-credit">Designed &amp; engineered by Sudhanshu Sinha</span>
+    </a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="#about" data-cursor="link"><span>01</span>About</a>
+      <a href="#projects" data-cursor="link"><span>02</span>Work</a>
+      <a href="#stack" data-cursor="link"><span>03</span>Stack</a>
+      <a href="#architecture" data-cursor="link"><span>04</span>System</a>
+      <a href="#journey" data-cursor="link"><span>05</span>Journey</a>
+      <a href="#contact" data-cursor="link"><span>06</span>Contact</a>
+    </nav>
+    <div class="nav__actions">
+      <button class="nav__assistant" id="navAssistant" data-cursor="link" aria-label="Open SRIIVERSE AI assistant">
+        <span class="nav__assistant-dot"></span> Ask AI
+      </button>
+      <button class="nav__burger" id="navBurger" aria-label="Open menu" aria-expanded="false">
+        <span></span><span></span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ======================= MOBILE MENU ======================= -->
+  <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
+    <nav class="mobile-menu__inner">
+      <a href="#about" data-cursor="link"><i>01</i>About</a>
+      <a href="#projects" data-cursor="link"><i>02</i>Work</a>
+      <a href="#stack" data-cursor="link"><i>03</i>Stack</a>
+      <a href="#architecture" data-cursor="link"><i>04</i>System</a>
+      <a href="#journey" data-cursor="link"><i>05</i>Journey</a>
+      <a href="#contact" data-cursor="link"><i>06</i>Contact</a>
+    </nav>
+    <div class="mobile-menu__foot">
+      <a href="https://github.com/sriiverse" target="_blank" rel="noopener">GitHub ↗</a>
+      <a href="https://www.linkedin.com/in/sudhanshu-sinha-4619a429a/" target="_blank" rel="noopener">LinkedIn ↗</a>
+      <a href="mailto:sudhanshutheking183@gmail.com">Email ↗</a>
+    </div>
+  </div>
+
+  <main id="view" tabindex="-1">
+
+    <!-- ===================== HERO ===================== -->
+    <section class="hero" id="hero">
+      <div class="hero__inner">
+        <div class="hero__badge reveal" data-reveal>
+          <span class="hero__badge-dot"></span>
+          <span>AI Engineer · Backend Systems · Full-Stack</span>
+        </div>
+
+        <h1 class="hero__title">
+          <span class="hero__title-row" data-split>SRIIVERSE</span>
+          <span class="hero__title-row hero__title-row--accent" data-split>AI</span>
+        </h1>
+
+        <div class="hero__subtitle reveal" data-reveal data-reveal-delay="120">
+          <span class="hero__bar"></span>
+          Building Intelligent Software That Solves Real Problems.
+        </div>
+
+        <p class="hero__intro reveal" data-reveal data-reveal-delay="220">
+          I design and engineer intelligent software, AI-powered products,
+          scalable backend systems, and modern web applications that solve
+          real-world problems — from natural-language database intelligence
+          to repository analysis platforms.
+        </p>
+
+        <div class="hero__cta reveal" data-reveal data-reveal-delay="320">
+          <a href="#projects" class="btn btn--primary" data-cursor="link">
+            <span>Explore My Work</span>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <a href="mailto:sudhanshutheking183@gmail.com" class="btn btn--ghost" data-cursor="link">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 7l9 6 9-6M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
+            <span>Get in Touch</span>
+          </a>
+        </div>
+
+        <div class="hero__socials reveal" data-reveal data-reveal-delay="420">
+          <a href="https://github.com/sriiverse" target="_blank" rel="noopener" aria-label="GitHub" data-cursor="link">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+          </a>
+          <a href="https://www.linkedin.com/in/sudhanshu-sinha-4619a429a/" target="_blank" rel="noopener" aria-label="LinkedIn" data-cursor="link">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4.98 3.5A2.5 2.5 0 1 1 0 3.5a2.5 2.5 0 0 1 4.98 0zM.5 8.5h4V24h-4V8.5zM8.5 8.5h3.8v2.2h.1c.5-1 1.8-2.2 3.7-2.2 4 0 4.7 2.6 4.7 6V24h-4v-6.8c0-1.6 0-3.7-2.3-3.7s-2.6 1.8-2.6 3.6V24h-4V8.5z"/></svg>
+          </a>
+          <a href="mailto:sudhanshutheking183@gmail.com" aria-label="Email" data-cursor="link">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 7l9 6 9-6M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
+          </a>
+        </div>
+      </div>
+
+      <a href="#about" class="hero__scroll" data-cursor="link" aria-label="Scroll down">
+        <span class="hero__scroll-text">Scroll</span>
+        <span class="hero__scroll-line"><span></span></span>
+      </a>
+
+      <div class="hero__meta" aria-hidden="true">
+        <span>SYS://SRIIVERSEAI</span>
+        <span class="hero__meta-sep"></span>
+        <span>v2.0 // ONLINE</span>
+        <span class="hero__meta-sep"></span>
+        <span id="heroClock">--:--:--</span>
+      </div>
+    </section>
+
+    <!-- ===================== MARQUEE ===================== -->
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee__track">
+        <span>Python Backend Engineering</span><i>✦</i>
+        <span>Artificial Intelligence</span><i>✦</i>
+        <span>System Design</span><i>✦</i>
+        <span>Database Engineering</span><i>✦</i>
+        <span>Developer Tools</span><i>✦</i>
+        <span>Scalable Software</span><i>✦</i>
+        <span>Python Backend Engineering</span><i>✦</i>
+        <span>Artificial Intelligence</span><i>✦</i>
+        <span>System Design</span><i>✦</i>
+        <span>Database Engineering</span><i>✦</i>
+        <span>Developer Tools</span><i>✦</i>
+        <span>Scalable Software</span><i>✦</i>
+      </div>
+    </div>
+
+    <!-- ===================== ABOUT ===================== -->
+    <section class="section about" id="about">
+      <div class="section__head reveal" data-reveal>
+        <span class="section__index">01 — Profile</span>
+        <h2 class="section__title">An engineer building <em>intelligence</em>, not just interfaces.</h2>
+      </div>
+
+      <div class="about__grid">
+        <div class="about__lead reveal" data-reveal>
+          <p>
+            SRIIVERSEAI is the engineering practice of <strong>Sudhanshu Sinha</strong> —
+            a software engineer focused on the parts of a product most people never see:
+            the backend services, the data models, and the AI that quietly makes everything smarter.
+          </p>
+          <p>
+            The work spans <strong>backend engineering in Python</strong>, applied
+            <strong>artificial intelligence</strong>, and full-stack delivery — translating
+            ambiguous problems into systems that are reliable, observable, and built to scale.
+            Every product here was shipped live, not prototyped in a notebook.
+          </p>
+          <p class="about__sig">— Engineering, SRIIVERSEAI</p>
+        </div>
+
+        <div class="about__focus">
+          <h3 class="about__focus-title reveal" data-reveal>Focus areas</h3>
+          <ul class="focus-list">
+            <li class="reveal" data-reveal><i>01</i><div><h4>Problem Solving</h4><p>Decomposing ambiguous requirements into systems with clear contracts and measurable outcomes.</p></div></li>
+            <li class="reveal" data-reveal><i>02</i><div><h4>Backend Engineering</h4><p>Python services, REST APIs, auth flows and business logic designed for correctness and maintainability.</p></div></li>
+            <li class="reveal" data-reveal><i>03</i><div><h4>Applied AI</h4><p>LLM-powered features, retrieval pipelines and prompt systems that ship as real product behaviour.</p></div></li>
+            <li class="reveal" data-reveal><i>04</i><div><h4>System Design</h4><p>Architecture across frontend, backend, AI and database layers — connected intentionally.</p></div></li>
+            <li class="reveal" data-reveal><i>05</i><div><h4>Database Engineering</h4><p>Query optimization, schema intelligence and relational data modelling at scale.</p></div></li>
+            <li class="reveal" data-reveal><i>06</i><div><h4>Scalable Software</h4><p>Containerized, deployed and observable — from local dev to production.</p></div></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PROJECTS ===================== -->
+    <section class="section projects" id="projects">
+      <div class="section__head reveal" data-reveal>
+        <span class="section__index">02 — Selected Work</span>
+        <h2 class="section__title">Three production systems. <em>Each its own world.</em></h2>
+      </div>
+
+      <div id="projectMount"></div>
+    </section>
+
+    <!-- ===================== TECH STACK ===================== -->
+    <section class="section stack" id="stack">
+      <div class="section__head reveal" data-reveal>
+        <span class="section__index">03 — Technology</span>
+        <h2 class="section__title">The instruments, <em>orbiting.</em></h2>
+        <p class="section__sub">No progress bars — proficiency is demonstrated in shipped systems. These are the tools that build them.</p>
+      </div>
+      <div class="stack__orb-field" id="orbField"></div>
+      <div class="stack__legend reveal" data-reveal>
+        <span><i style="background:#6C63FF"></i> Language</span>
+        <span><i style="background:#38BDF8"></i> Frontend</span>
+        <span><i style="background:#7C3AED"></i> Backend</span>
+        <span><i style="background:#4F46E5"></i> Data &amp; Infra</span>
+      </div>
+    </section>
+
+    <!-- ===================== ARCHITECTURE ===================== -->
+    <section class="section architecture" id="architecture">
+      <div class="section__head reveal" data-reveal>
+        <span class="section__index">04 — System Architecture</span>
+        <h2 class="section__title">How a request travels through <em>an AI system.</em></h2>
+        <p class="section__sub">Hover each node to inspect its responsibility. The same five-layer topology powers every project here.</p>
+      </div>
+      <div class="arch" id="archMount"></div>
+    </section>
+
+    <!-- ===================== TIMELINE ===================== -->
+    <section class="section journey" id="journey">
+      <div class="section__head reveal" data-reveal>
+        <span class="section__index">05 — Journey</span>
+        <h2 class="section__title">A path, not a <em>résumé.</em></h2>
+      </div>
+      <div class="timeline" id="timelineMount"></div>
+    </section>
+
+    <!-- ===================== ACHIEVEMENTS ===================== -->
+    <section class="section stats" id="stats">
+      <div class="stats__grid" id="statsMount"></div>
+    </section>
+
+    <!-- ===================== CONTACT ===================== -->
+    <section class="section contact" id="contact">
+      <div class="contact__card reveal" data-reveal>
+        <div class="contact__glow"></div>
+        <span class="contact__label">// Available for engineering work</span>
+        <h2 class="contact__title">Let's Build Something <em>Amazing</em> Together.</h2>
+        <p class="contact__text">
+          If you're building intelligent software and need an engineer who thinks in
+          systems — backend, AI, and the architecture between them — let's talk.
+        </p>
+        <div class="contact__links">
+          <a href="mailto:sudhanshutheking183@gmail.com" class="contact__link" data-cursor="link">
+            <span class="contact__link-k">Email</span>
+            <span class="contact__link-v">sudhanshutheking183@gmail.com ↗</span>
+          </a>
+          <a href="https://github.com/sriiverse" target="_blank" rel="noopener" class="contact__link" data-cursor="link">
+            <span class="contact__link-k">GitHub</span>
+            <span class="contact__link-v">@sriiverse ↗</span>
+          </a>
+          <a href="https://www.linkedin.com/in/sudhanshu-sinha-4619a429a/" target="_blank" rel="noopener" class="contact__link" data-cursor="link">
+            <span class="contact__link-k">LinkedIn</span>
+            <span class="contact__link-v">/in/sudhanshu-sinha ↗</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== FOOTER ===================== -->
+    <footer class="footer">
+      <div class="footer__top">
+        <a href="#hero" class="footer__brand" data-cursor="link">SRIIVERSE<span>AI</span></a>
+        <div class="footer__links">
+          <a href="#about" data-cursor="link">About</a>
+          <a href="#projects" data-cursor="link">Work</a>
+          <a href="#stack" data-cursor="link">Stack</a>
+          <a href="#contact" data-cursor="link">Contact</a>
+        </div>
+        <button class="footer__assistant" id="footerAssistant" data-cursor="link">
+          <span class="footer__assistant-dot"></span> Ask SRIIVERSE AI
+        </button>
+      </div>
+      <div class="footer__bottom">
+        <span>© <span id="year"></span> SRIIVERSEAI — Designed &amp; engineered by Sudhanshu Sinha.</span>
+        <span class="footer__built">Built with Three.js · GSAP · WebGL</span>
+      </div>
+    </footer>
+  </main>
+
+  <!-- ======================= WORKSPACE OVERLAY (focus mode backdrop) ======================= -->
+  <div class="assistant-overlay" id="assistantOverlay" aria-hidden="true"></div>
+
+  <!-- ======================= AI ASSISTANT ======================= -->
+  <button class="fab" id="fab" aria-label="Open SRIIVERSE AI assistant" data-cursor="link">
+    <span class="fab__pulse"></span>
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-10 10 10 10 0 0 0 4 8v3l3.5-1.8A10 10 0 0 0 12 22a10 10 0 0 0 10-10A10 10 0 0 0 12 2zm0 4a2 2 0 0 1 2 2 2 2 0 0 1-4 0 2 2 0 0 1 2-2zm-3 6h6v1c0 1.7-1.3 3-3 3s-3-1.3-3-3v-1z"/></svg>
+  </button>
+
+  <aside class="assistant" id="assistant" aria-hidden="true" role="dialog" aria-label="SRIIVERSE AI assistant">
+
+    <!-- Header -->
+    <div class="assistant__head">
+      <div class="assistant__id">
+        <span class="assistant__avatar"><span>S</span></span>
+        <div>
+          <strong>SRIIVERSE AI</strong>
+          <small><span class="assistant__live"></span> Online · knows this portfolio</small>
+        </div>
+      </div>
+      <div class="assistant__head-actions">
+        <button class="assistant__expand" id="assistantExpand" title="Expand workspace" aria-label="Expand AI workspace">
+          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </button>
+        <button class="assistant__focus" id="assistantFocus" title="Focus mode" aria-label="Enter focus mode">⊞ Focus</button>
+        <button class="assistant__close" id="assistantClose" aria-label="Close assistant">✕</button>
+      </div>
+    </div>
+
+    <!-- Visitor Profile Badge (injected by renderer once profile is inferred) -->
+    <div class="assistant__profile-slot" id="assistantProfileSlot"></div>
+
+    <!-- Screen-reader-only live region: announces exactly one complete
+         message per assistant turn (populated in assistant.js after
+         streaming finishes), instead of every streamed word-chunk. -->
+    <div id="assistantLive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Conversation body -->
+    <div class="assistant__body" id="assistantBody" data-lenis-prevent>
+      <div class="assistant__msg assistant__msg--bot">
+        <span class="assistant__msg-name">SRIIVERSE AI</span>
+        <p>Welcome to SRIIVERSEAI. I'm the digital brain of this portfolio — trained on Sudhanshu's projects, engineering decisions, and system architecture. Ask me anything, or tell me what you're looking for.</p>
+      </div>
+    </div>
+
+    <!-- Suggestion chips -->
+    <div class="assistant__chips" id="assistantChips"></div>
+
+    <!-- Input form -->
+    <form class="assistant__input" id="assistantForm">
+      <input type="text" id="assistantText" placeholder="Ask about projects, architecture, or why hire him…" autocomplete="off" />
+      <button type="submit" aria-label="Send">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+      </button>
+    </form>
+
+  </aside>
+
+  <!-- ======================= APP ======================= -->
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

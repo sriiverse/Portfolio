@@ -1,0 +1,2 @@
+# Place resume.pdf and other static media here.
+# PROFILE.resume in src/content.js points at assets/resume.pdf

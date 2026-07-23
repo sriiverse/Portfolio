@@ -1,0 +1,50 @@
+# .gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Env / secrets (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+
+# Logs & local dumps
+*.log
+npm-debug.log*
+_final_benchmark*
+_phase*
+_polish*
+_validate*
+_check*
+_spotcheck*
+_run_*
+_probe*
+
+# Node (this project is build-free; ignore if tools appear locally)
+node_modules/
+dist/
+.cache/
+.parcel-cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local serve / temp
+.temp/
+.tmp/
+*.local
