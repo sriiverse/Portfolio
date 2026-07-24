@@ -13,9 +13,9 @@
  * and all receive the same grounded portfolio context so answers stay anchored.
  */
 
-import { retrieve, getDoc, getProfile, getAllProjects, getStack } from './knowledge.js';
+import { retrieve, getDoc, getProfile, getAllProjects, getStack, getArchitecture } from './knowledge.js';
 import { analyzeJobDescription } from './jdmatch.js';
-import { ASSISTANT_CAPABILITIES, TECH_TAKES } from './persona.js';
+import { ASSISTANT_CAPABILITIES, TECH_TAKES, SELF_MODEL } from './persona.js';
 
 /* ============================================================
    CONFIG
@@ -816,12 +816,12 @@ const LocalProvider = {
    *      or confidence outcome changes, only whether an identical string
    *      is printed once or twice.
    *
-   * Version 3 Sprint 1 — after fragments are assembled, a conversational
-   * move is selected from the *already-built* plan + `questionFrame`
-   * (never by re-classifying the query), and presentation-only dialogue
-   * framing is applied (Answer-before-prove leads, Clarify wording,
-   * Decline+Pivot, Invite). Facts, sources, kind overrides, and block
-   * order are unchanged. See docs/V3_CONVERSATIONAL_ARCHITECTURE.md.
+   * Version 3 Sprint 1 — conversational moves after fragment assembly.
+   * Version 3 Sprint 1.5 — Portfolio Intelligence: when the turn is not a
+   * Clarify/Decline/Greeting, composition may synthesize an expert answer
+   * from the live PROJECTS/STACK/ARCHITECTURE records (same source of truth
+   * as knowledge.js), then scrub implementation/doc-export phrasing.
+   * Understanding, entities, evidence, confidence, and planning stay frozen.
    */
   _renderPlan(plan, ctx) {
     if (!plan || !Array.isArray(plan.blocks)) {
@@ -846,14 +846,6 @@ const LocalProvider = {
         if (key && !seenFragments.has(key)) {
           seenFragments.add(key);
           if (inline && paragraphs.length) {
-            // Avoid a punctuation collision like "stack. — Technologies" or
-            // "documented: — Hire..." when the preceding paragraph already
-            // ends in sentence-final punctuation — a plain space continues
-            // it as one sentence instead of visibly double-punctuating.
-            // `\*{0,2}` also absorbs the rendering-polish pass's own
-            // lead-in bolding (`**Based on what is documented:**`) so a
-            // bolded colon is still recognized as sentence-final
-            // punctuation, not just a bare one.
             const prev = paragraphs[paragraphs.length - 1];
             const sep = /[.:!?]\*{0,2}\s*$/.test(prev) ? ' ' : ' — ';
             paragraphs[paragraphs.length - 1] = prev + sep + fragment;
@@ -868,15 +860,41 @@ const LocalProvider = {
       if (fh) followupHint = fh;
     }
 
-    const sources = plan.sourcesOverride || this._dedupeSources(sourcesAcc);
+    let sources = plan.sourcesOverride || this._dedupeSources(sourcesAcc);
     const move = this._selectConversationalMove(plan, ctx);
-    const spoken = this._applyConversationalMove(paragraphs, move, plan, ctx);
-    if (followupHint || move) {
-      payload = Object.assign({}, payload, {
-        ...(followupHint ? { _followupHint: followupHint } : {}),
-        _conversationalMove: move,
-      });
+
+    // Sprint 1.5 — expert synthesis path.
+    // Greeting / Clarify never synthesize. Decline may synthesize only when the
+    // query clearly matches a portfolio-intelligence intent (false skill-gap
+    // collisions like "external API" / "demonstrates AI") — never for bare gaps.
+    let spoken = null;
+    let intelligenceIntent = null;
+    const qRaw = String(ctx?.questionFrame?.rawQuery || '');
+    const probedIntent = (move !== 'Greeting' && move !== 'Clarify')
+      ? this._detectIntelligenceIntent(qRaw, ctx)
+      : null;
+    const maySynthesize = probedIntent && (
+      move !== 'Decline'
+      || this._intelligenceMayOverrideDecline(probedIntent)
+    );
+    if (maySynthesize) {
+      const intel = this._tryPortfolioIntelligence(plan, ctx, move, probedIntent);
+      if (intel?.text) {
+        spoken = intel.text;
+        intelligenceIntent = intel.intent;
+        if (intel.sources?.length) sources = this._dedupeSources([...intel.sources, ...sources]);
+        if (intel.replaceKind) kind = 'text';
+      }
     }
+
+    if (!spoken) spoken = this._applyConversationalMove(paragraphs, move, plan, ctx);
+    spoken = this._scrubImplementationVoice(spoken, ctx);
+
+    payload = Object.assign({}, payload, {
+      ...(followupHint ? { _followupHint: followupHint } : {}),
+      _conversationalMove: move,
+      ...(intelligenceIntent ? { _portfolioIntelligence: intelligenceIntent } : {}),
+    });
 
     return { text: spoken, sources, kind, payload };
   },
@@ -1042,20 +1060,66 @@ const LocalProvider = {
 
   /**
    * Softens Version 2's documentary DirectAnswer leads without adding claims.
-   * `preferGone: true` removes a lead that is *only* the documentary opener.
+   * Sprint 1.5: never replace with "From his portfolio" — that still sounds
+   * like a doc export. Prefer removing the opener entirely.
    */
   _softenDocumentaryLead(text, { preferGone } = {}) {
     const raw = String(text || '');
     const trimmed = raw.trim();
-    // Exact documentary opener (optionally bolded).
     if (/^\*{0,2}Based on what is documented:\*{0,2}$/i.test(trimmed)) {
-      return preferGone ? '' : 'From his portfolio:';
+      return preferGone ? '' : '';
     }
-    // Opener glued onto the same paragraph (inline evidence join).
     if (/^\*{0,2}Based on what is documented:\*{0,2}\s+/i.test(trimmed)) {
       return trimmed.replace(/^\*{0,2}Based on what is documented:\*{0,2}\s+/i, '');
     }
+    if (/^\*{0,2}From his portfolio:\*{0,2}$/i.test(trimmed)) {
+      return '';
+    }
+    if (/^\*{0,2}From his portfolio:\*{0,2}\s+/i.test(trimmed)) {
+      return trimmed.replace(/^\*{0,2}From his portfolio:\*{0,2}\s+/i, '');
+    }
     return raw;
+  },
+
+  /**
+   * Sprint 1.5 — strip implementation / documentation-export voice from
+   * composed speech. Does not add claims. If the visitor explicitly asks how
+   * the assistant works, allow a plain local/bundled explanation (no RAG jargon).
+   */
+  _scrubImplementationVoice(text, ctx) {
+    let t = String(text || '');
+    if (!t) return t;
+
+    const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
+    const asksHowAssistantWorks = /how (do|does) (you|the assistant|this) work|are you (an |a )?(llm|ai|chatgpt|gpt|rag)|external api|do you (call|use) (an? )?(api|llm|openai|gemini)|retrieval|embedding|knowledge base|how (are|is) (you|this) (built|implemented)/i.test(q);
+
+    // Always kill doc-export leads and RAG self-labels in visitor-facing speech.
+    t = t.replace(/\*{0,2}Based on what is documented:\*{0,2}\s*/gi, '');
+    t = t.replace(/\*{0,2}From his portfolio:\*{0,2}\s*/gi, '');
+    t = t.replace(/\bAccording to (the )?(documentation|knowledge base|docs)\b[,:]?\s*/gi, '');
+    t = t.replace(/\b(Based on|From) (the )?(documentation|knowledge base|docs)\b[,:]?\s*/gi, '');
+
+    if (!asksHowAssistantWorks) {
+      t = t.replace(/\bI'?m a retrieval-and-reasoning layer over Sudhanshu'?s own portfolio content, not a general-purpose model\s*[—–-]\s*/gi, '');
+      t = t.replace(/\bretrieval-and-reasoning layer\b/gi, 'portfolio assistant');
+      t = t.replace(/\bnot a general-purpose model\b/gi, 'focused on this portfolio');
+      t = t.replace(/\bonly answer from what'?s actually documented here\b/gi, 'only speak to what\'s in this portfolio');
+      t = t.replace(/\bwhen something isn'?t\.?\s*$/gim, 'when something isn\'t covered.');
+      t = t.replace(/\b(matched locally|bundled into this page and matched)\b/gi, 'available in this portfolio');
+      t = t.replace(/\bThis information isn'?t documented in the portfolio\./gi, 'I don\'t have that in Sudhanshu\'s portfolio.');
+      t = t.replace(/\bisn'?t documented (here|in the portfolio)\b/gi, 'isn\'t covered in his portfolio');
+      t = t.replace(/\bwhat is documented\b/gi, 'what\'s in the portfolio');
+      t = t.replace(/\bfrom (the )?documentation\b/gi, 'from his work');
+    } else {
+      // Honest mechanism answer without RAG vocabulary.
+      if (/retrieval-and-reasoning|knowledge base|embeddings?/i.test(t)) {
+        t = "I run entirely in this page — I reason from Sudhanshu's portfolio content that's already here, and I don't call an external API. I only claim what's in the portfolio, and I'll say so when something isn't.";
+      }
+    }
+
+    // Collapse leftover whitespace from removals.
+    t = t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    return t;
   },
 
   _alreadyEndsWithInvite(parts) {
@@ -1132,6 +1196,388 @@ const LocalProvider = {
     return null;
   },
 
+  /* ============================================================
+     V3 SPRINT 1.5 — PORTFOLIO INTELLIGENCE (composition-only)
+     Synthesize expert judgments from live PROJECTS / STACK /
+     ARCHITECTURE. Never invent employers, metrics, or seniority.
+     Does not touch understanding / entities / evidence / confidence /
+     planning. Never overrides Clarify / Decline / Greeting (gated in
+     _renderPlan).
+     ============================================================ */
+
+  /**
+   * Attempt expert synthesis. Returns `{ text, intent, sources?, replaceKind }`
+   * or null when the turn should keep the normal move framing.
+   * `forcedIntent` — optional pre-detected intent from `_renderPlan`.
+   */
+  _tryPortfolioIntelligence(plan, ctx, move, forcedIntent = null) {
+    const q = String(ctx?.questionFrame?.rawQuery || '').trim();
+    if (!q) return null;
+
+    const intent = forcedIntent || this._detectIntelligenceIntent(q, ctx);
+    if (!intent) return null;
+
+    // Leave structured tech tables alone unless the ask is a "why X instead of Y" rationale.
+    if (move === 'Compare' && intent !== 'why_flask' && intent !== 'why_fastapi') return null;
+
+    // Owned-gap answers stay honest — unless this intent is an evaluative
+    // question that falsely collided with a skill-gap (e.g. "external API").
+    const blocks = plan?.blocks || [];
+    const hasGap = blocks.some((b) => b.type === 'GapDisclosure');
+    const direct = blocks.find((b) => b.type === 'DirectAnswer');
+    if ((hasGap || direct?.data?.polarity === 'negative') && !this._intelligenceMayOverrideDecline(intent)) {
+      return null;
+    }
+
+    const text = this._synthesizeIntelligence(intent, q, ctx, plan);
+    if (!text) return null;
+
+    let spoken = text;
+    const inviteMove = move === 'Recommend' ? 'Recommend' : 'Answer';
+    const invite = this._inviteFor(plan, ctx, inviteMove);
+    if (invite && !this._alreadyEndsWithInvite([spoken])) {
+      spoken = `${spoken}\n\n${invite}`;
+    }
+
+    return { text: spoken, intent, replaceKind: true, sources: [] };
+  },
+
+  /** Intents that may speak over a false Decline/gap collision. */
+  _intelligenceMayOverrideDecline(intent) {
+    return [
+      'capabilities', 'identity', 'assistant_mechanism',
+      'best_work', 'most_difficult', 'interview_first',
+      'demo_backend', 'demo_ai', 'demo_frontend',
+      'backend_vs_frontend', 'docker_experience', 'why_flask', 'why_fastapi',
+      'database_strength', 'scalable_backend',
+      'arch_why', 'arch_tradeoffs', 'arch_scale',
+      'why_hire', 'engineer_type', 'best_role', 'production_ready', 'strengths', 'learn_next',
+      'portfolio_different', 'strongest_decision', 'tech_frequency', 'design_philosophy',
+    ].includes(intent);
+  },
+
+  _detectIntelligenceIntent(q, ctx) {
+    const t = q.toLowerCase();
+    const qType = ctx?.questionFrame?.questionType;
+
+    // Capability / identity first (planning may emit SelfModel with RAG voice).
+    if (/what can you do|what do you (do|offer|help with)|your capabilities|how can you help/i.test(t)) {
+      return 'capabilities';
+    }
+    if (/who are you|what are you|are you (an? )?(ai|assistant|bot|chatgpt)/i.test(t)
+      || (qType === 'Identity' && !/remember|memory|external|api|llm|how.*(work|built)|what can you do|what do you do/i.test(t))) {
+      return 'identity';
+    }
+    if (/how (do|does) (you|the assistant|this) work|are you (calling|using).*(api|llm)|external api|retrieval|embedding|knowledge base/i.test(t)) {
+      return 'assistant_mechanism';
+    }
+
+    // Project judgments
+    if (/best (work|project)|strongest project|favorite project|most impressive/i.test(t)) return 'best_work';
+    if (/most (technically )?(difficult|complex|challenging)|hardest project/i.test(t)) return 'most_difficult';
+    if (/show first|interview first|open with|lead with|demo first/i.test(t)) return 'interview_first';
+    if (/demonstrat\w* backend|best.*(for )?backend|backend engineering (the )?most|most.*backend/i.test(t)) return 'demo_backend';
+    if (/demonstrat\w* (ai|llm)|best.*(for )?ai|ai engineering|most.*\bai\b/i.test(t)) return 'demo_ai';
+    if (/demonstrat\w* frontend|best.*(for )?frontend|most.*frontend/i.test(t)) return 'demo_frontend';
+
+    // Skills / experience judgments
+    if (/stronger (in )?(backend|frontend)|backend or frontend|frontend or backend/i.test(t)) return 'backend_vs_frontend';
+    if (/how experienced.*(docker)|know docker|docker experience|comfortable with docker/i.test(t)) return 'docker_experience';
+    if (/why flask|flask instead of fastapi|prefer flask|chose flask/i.test(t)) return 'why_flask';
+    if (/why fastapi|fastapi instead of flask|prefer fastapi|chose fastapi/i.test(t)) return 'why_fastapi';
+    if (/which database|strongest.*(database|db|postgres|mongo)|best.*(with )?(postgres|mongodb|database)/i.test(t)) return 'database_strength';
+    if (/scalable backend|build a scalable|could you (build|scale)|production.?scale/i.test(t)) return 'scalable_backend';
+
+    // Architecture reasoning
+    if (/why (was )?(this |the )?architecture|why.*(chosen|choose|designed)/i.test(t) && /architect|layer|system|design|built/i.test(t)) {
+      return 'arch_why';
+    }
+    if (/trade-?offs?|what would you (improve|change|rebuild)|if you rebuilt/i.test(t)) return 'arch_tradeoffs';
+    if (/how (do|does|would) (these |the )?projects? scale|do they scale|scalability/i.test(t)) return 'arch_scale';
+
+    // Recruiter / hiring
+    if (/why (should i )?hire|why hire/i.test(t)) return 'why_hire';
+    if (/what kind of engineer|what type of engineer|what engineer is he/i.test(t)) return 'engineer_type';
+    if (/which role|best (role|fit)|suits him|role (fit|suit)/i.test(t)) return 'best_role';
+    if (/ready for production|production.?ready|production work/i.test(t)) return 'production_ready';
+    if (/what (are )?his strengths|his (main )?strengths|strengths\??$/i.test(t)) return 'strengths';
+    if (/learn next|should (he|sudhanshu) learn|gaps to (close|fill)|what.*(missing|improve)/i.test(t)) return 'learn_next';
+
+    // Portfolio meta
+    if (/makes this portfolio different|portfolio different|what'?s different/i.test(t)) return 'portfolio_different';
+    if (/strongest engineering decision|best engineering decision/i.test(t)) return 'strongest_decision';
+    if (/technologies appear most|most (common|used) (tech|technologies)|which tech(nologies)? (appear|show up)/i.test(t)) return 'tech_frequency';
+    if (/design philosophy|common (design|architecture) philosophy|philosophy across/i.test(t)) return 'design_philosophy';
+
+    // Broader recruiter / recommendation turns: synthesize when Recommend move
+    // and the query is evaluative rather than "open X demo".
+    if (qType === 'Recruiter' && /hire|fit|strength|recommend|suit|ready|engineer/i.test(t)) {
+      if (/hire/.test(t)) return 'why_hire';
+      if (/role|fit|suit/.test(t)) return 'best_role';
+      if (/strength/.test(t)) return 'strengths';
+      return 'why_hire';
+    }
+
+    return null;
+  },
+
+  _synthesizeIntelligence(intent, q, ctx, plan) {
+    const projects = getAllProjects();
+    const stack = getStack();
+    const arch = getArchitecture();
+    const profile = getProfile();
+    const scores = this._projectEvidenceScores(projects);
+
+    const byId = (id) => projects.find((p) => p.id === id);
+    const qf = byId('queryforge');
+    const pp = byId('placementpro');
+    const rr = byId('reporadar');
+
+    const name = (p) => (p ? `**${p.name}**` : 'a shipped project');
+    const stackList = (p) => (p?.stack || []).map((s) => `\`${s}\``).join(', ');
+
+    switch (intent) {
+      case 'capabilities':
+        return this._capabilityVoice();
+      case 'identity':
+        return this._identityVoice(profile);
+      case 'assistant_mechanism':
+        return "I run entirely in this page — I reason from Sudhanshu's portfolio content that's already here, and I don't call an external API. I stay inside what's actually in the portfolio, and I'll tell you plainly when something isn't covered.";
+
+      case 'best_work':
+        return [
+          `I'd lead with ${name(rr)}.`,
+          `It's the clearest full-system story: a FastAPI + React + TypeScript product that analyzes real GitHub repositories, ships publicly (${rr.live}), and is open-sourced (${rr.repo}). That combination — live product, modern split stack, and inspectable code — is the strongest "here's the work" signal across the three.`,
+          `${name(qf)} is the deepest domain play (schema-aware SQL reasoning), and ${name(pp)} shows product thinking around career workflows — but RepoRadar is the one I'd put first when someone asks for his best work.`,
+        ].join('\n\n');
+
+      case 'most_difficult':
+        return [
+          `Technically, ${name(qf)} is the hardest problem domain.`,
+          `Natural language → SQL, execution-plan awareness, and schema-grounded explanations mean the AI has to stay correct against a real database model — not just generate fluent text. That correctness bar is stricter than summarization-style intelligence.`,
+          `${name(rr)} is operationally complex (ingest a foreign repo, layer summary → architecture → code explanation), and ${name(pp)} is orchestration-heavy around resume → gaps → roadmap. If "difficult" means correctness under schema constraints, QueryForge wins.`,
+        ].join('\n\n');
+
+      case 'interview_first':
+        return [
+          `In an interview, I'd open with ${name(rr)}.`,
+          `You can demo it live, walk the FastAPI/React split, and — because the repo is public — go as deep as the interviewer wants. Then use ${name(qf)} if they care about data/AI correctness, or ${name(pp)} if the role is product/platform oriented.`,
+        ].join('\n\n');
+
+      case 'demo_backend':
+        return [
+          `Backend engineering shows up most clearly in ${name(qf)} and ${name(pp)} — both center on Python/Flask services that own orchestration, APIs, and AI workflow control (${stackList(qf)}).`,
+          `${name(rr)} also has a serious backend (${stackList(rr)}), but its story is split more evenly with a TypeScript React surface. If you want "backend-first," start with QueryForge or Placement Pro+, then show RepoRadar's FastAPI core.`,
+        ].join('\n\n');
+
+      case 'demo_ai':
+        return [
+          `All three are AI products, but they demonstrate different AI muscles:`,
+          `- ${name(qf)} — schema-aware reasoning and SQL optimization (AI as a correctness layer over real data)`,
+          `- ${name(rr)} — repository intelligence layered from summary → architecture → code explanation`,
+          `- ${name(pp)} — resume-grounded gap detection and dynamic roadmaps`,
+          `If I pick one "best AI demo," it's ${name(qf)} for grounded reasoning, or ${name(rr)} for layered productized intelligence you can demo on any public repo.`,
+        ].join('\n\n');
+
+      case 'demo_frontend':
+        return [
+          `Frontend craft shows strongest in ${name(rr)} (\`React\`, \`TypeScript\`) and ${name(qf)} (\`React\`, \`JavaScript\`, \`TailwindCSS\`).`,
+          `${name(pp)} ships a distinctive terminal-style "Placement.OS" surface in JavaScript/Tailwind — strong product UX, less of a classic component-framework showcase than the React apps.`,
+        ].join('\n\n');
+
+      case 'backend_vs_frontend': {
+        const back = stack.filter((s) => s.group === 'back').map((s) => s.name);
+        const front = stack.filter((s) => s.group === 'front').map((s) => s.name);
+        return [
+          `He's stronger on the backend side — and the portfolio reads that way.`,
+          `All three production systems are built around Python services and APIs (${back.map((n) => `\`${n}\``).join(', ')}), with AI orchestration living in that backend layer. Frontend is real and shipped (${front.map((n) => `\`${n}\``).join(', ')} on QueryForge and RepoRadar), but the center of gravity is backend + applied AI, which matches his title: ${profile.title}.`,
+          `I wouldn't call him frontend-only — I'd call him a backend-leaning full-stack engineer who can ship the UI when the product needs it.`,
+        ].join('\n\n');
+      }
+
+      case 'docker_experience': {
+        const hasDocker = stack.some((s) => /docker/i.test(s.name));
+        const deploy = arch.find((n) => n.id === 'deploy');
+        if (!hasDocker) {
+          return `I don't see Docker called out as a named skill in the stack list, so I won't invent depth there. What I can say is his deployment layer includes container-friendly production hosting (${deploy?.sub || 'Docker · Vercel · Netlify'} in the architecture model) — ask about a specific project's deploy path if you want the grounded details.`;
+        }
+        return [
+          `Yes — Docker is part of his stack, sitting in the deployment layer alongside Vercel, Netlify, and Render (${deploy?.desc || 'containerized, reproducible deploys'}).`,
+          `I won't claim years of ops seniority that aren't stated — what the portfolio shows is that containerization and reproducible deploy paths are part of how he ships, not a side hobby.`,
+        ].join('\n\n');
+      }
+
+      case 'why_flask': {
+        const take = TECH_TAKES.find((x) => x.category === 'backend-framework');
+        return [
+          `Flask shows up on ${name(qf)} and ${name(pp)} — the projects where backend + AI orchestration need a small surface and explicit control over the request lifecycle.`,
+          take?.preference || `FastAPI is the better default for async/API-first work (as on ${name(rr)}); Flask stays the right call when minimalism and orchestration clarity matter more than async-native defaults.`,
+        ].join('\n\n');
+      }
+
+      case 'why_fastapi': {
+        const take = TECH_TAKES.find((x) => x.category === 'backend-framework');
+        return [
+          `${name(rr)} ships FastAPI behind a React/TypeScript frontend — a clean split for an API-first intelligence service doing I/O-heavy GitHub ingestion.`,
+          take?.preference || 'For new async/API-first services, FastAPI is the default; Flask remains appropriate when you want a smaller, more explicit surface.',
+        ].join('\n\n');
+      }
+
+      case 'database_strength': {
+        const take = TECH_TAKES.find((x) => x.category === 'database');
+        const data = stack.filter((s) => /postgres|mongo/i.test(s.name)).map((s) => `\`${s.name}\``);
+        const dataPhrase = data.length ? data.join(' and ') : '`PostgreSQL` and `MongoDB`';
+        return [
+          `At the portfolio level he lists both ${dataPhrase} as the data layer.`,
+          take?.groundingNote
+            ? `${take.preference}\n\n${take.groundingNote}`
+            : (take?.preference || 'Postgres is the default when relational integrity matters; Mongo when document flexibility wins.'),
+          `${name(qf)} is the project that most clearly demonstrates database thinking — SQL generation, plan awareness, and schema-grounded assistance — even though the per-project stack lists don't pin a single DB vendor.`,
+        ].join('\n\n');
+      }
+
+      case 'scalable_backend':
+        return [
+          `Yes — within the scope of what he's actually shipped.`,
+          `The pattern across all three systems is the same: a Python API layer, REST boundaries, an AI reasoning layer over real inputs (schema / resume / repo), and deployable frontends. That's a solid foundation for scaling a service.`,
+          `What I won't invent: multi-region ops, Kafka-scale event buses, or years of SRE tenure that aren't in the portfolio. What I will say: he designs backends as the correctness owner in a five-layer topology, which is how you keep systems scalable without turning the AI into a black box.`,
+        ].join('\n\n');
+
+      case 'arch_why': {
+        const layers = arch.map((n) => `**${n.label}** (${n.sub})`).join(' → ');
+        return [
+          `The architecture is a deliberate five-layer split: ${layers}.`,
+          `Why: each layer has one job. Frontend talks over REST; backend owns auth, validation, and orchestration; AI reasons over real data instead of inventing it; the database is source of truth; deployment stays reproducible.`,
+          `That same topology shows up across ${name(qf)}, ${name(pp)}, and ${name(rr)} — different products, same engineering philosophy.`,
+        ].join('\n\n');
+      }
+
+      case 'arch_tradeoffs':
+        return [
+          `The main trade-off of the five-layer model is operational overhead: more moving parts than a single monolith, in exchange for clear ownership (especially keeping AI from becoming a blind generator).`,
+          `If he rebuilt tomorrow, the honest improvements I'd expect — still grounded in what's already there — would be deeper per-project observability, tighter pinning of data stores in each project's public stack story, and pushing more async/API-first patterns where I/O dominates (the direction ${name(rr)} already took with FastAPI).`,
+          `I won't invent a rewrite plan he hasn't written down — those are the pressure points the current portfolio already implies.`,
+        ].join('\n\n');
+
+      case 'arch_scale':
+        return [
+          `They scale along the seams the architecture already defines: horizontalize the Python API workers, keep the AI layer as a reasoning service over real inputs, and let the frontend stay a thin client over REST.`,
+          `Live deployments on Netlify/Vercel/Render show the products are production-hosted, not laptop demos. Exact capacity numbers aren't published here, so I won't invent QPS or SLA claims — the scaling story is architectural, not marketed metrics.`,
+        ].join('\n\n');
+
+      case 'why_hire':
+        return [
+          `Hire him because he ships real systems — three live AI products, not slideware.`,
+          `He thinks in backend correctness and applied AI: Python services, REST APIs, and an architecture where the model reasons over real data (schema, resume, or repository) instead of hallucinating product behavior. He's full-stack enough to finish the UI, but the hiring signal is "backend + AI engineer who can own a product end to end."`,
+          `Best proof: open ${name(rr)} for the modern full-stack demo, then ${name(qf)} if you care about data/AI rigor.`,
+        ].join('\n\n');
+
+      case 'engineer_type':
+        return [
+          `He's a **backend-leaning full-stack engineer with applied AI as a product skill** — matching ${profile.title}.`,
+          `Not a research scientist, not a pure frontend specialist: someone who builds Python services, wires AI into real workflows, and ships the interface when the product needs it.`,
+        ].join('\n\n');
+
+      case 'best_role':
+        return [
+          `Best fit: **Python backend / AI platform / full-stack product engineer** roles where shipping matters.`,
+          `Especially strong for teams that need API design, LLM orchestration grounded in real data, and the judgment to keep architecture honest. Less ideal as a first hire for pure mobile, deep ML research, or infra-only SRE — those aren't what this portfolio demonstrates.`,
+        ].join('\n\n');
+
+      case 'production_ready':
+        return [
+          `Yes — for the kind of work this portfolio shows.`,
+          `Three systems are live with public URLs. That's a stronger production signal than private prototypes. Readiness here means: can design a service, integrate AI carefully, and deploy. It does not automatically mean "staff architect for a Fortune-500 mesh" — that would be inventing seniority the portfolio doesn't claim.`,
+        ].join('\n\n');
+
+      case 'strengths':
+        return [
+          `Strengths that are actually evidenced:`,
+          `- **Shipping** — three production AI systems online`,
+          `- **Backend systems** — Flask/FastAPI, REST, orchestration`,
+          `- **Applied AI** — LLMs used as a reasoning layer over real inputs, not as a gimmick`,
+          `- **Full-stack finish** — React/TypeScript where the product needs a serious UI`,
+          `- **Architectural consistency** — same five-layer philosophy across projects`,
+        ].join('\n\n');
+
+      case 'learn_next':
+        return [
+          `Based on what's present vs. absent in the portfolio (not a personal development plan he wrote): strengthening public signals around data stores per project, deeper async/API-first patterns beyond RepoRadar, and more explicit observability/ops storytelling would make the backend story even sharper.`,
+          `I won't invent a curriculum. If you're hiring for a specific stack gap (Kubernetes, Kafka, etc.), ask me — I'll say honestly whether it appears here.`,
+        ].join('\n\n');
+
+      case 'portfolio_different':
+        return [
+          `Most portfolios list projects. This one ships three live AI systems that share one architectural philosophy — frontend → backend → AI → data → deploy — and treats the AI as a reasoning layer over real inputs.`,
+          `You can click into demos, not just screenshots. That's the difference.`,
+        ].join('\n\n');
+
+      case 'strongest_decision':
+        return [
+          `The strongest engineering decision is treating AI as a **reasoning layer over real data**, not a blind text generator — stated explicitly across the architecture and visible in QueryForge's schema-aware SQL work, Placement Pro+'s resume-anchored advice, and RepoRadar's layered repo intelligence.`,
+          `That single choice keeps the products useful and keeps the architecture honest.`,
+        ].join('\n\n');
+
+      case 'tech_frequency': {
+        const counts = {};
+        for (const p of projects) {
+          for (const s of p.stack || []) counts[s] = (counts[s] || 0) + 1;
+        }
+        const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+        const top = ranked.filter(([, c]) => c >= 2).map(([s, c]) => `\`${s}\` (${c}/3 projects)`);
+        const allThree = ranked.filter(([, c]) => c === 3).map(([s]) => `\`${s}\``);
+        return [
+          `Across the three shipped projects, the most repeated technologies are: ${top.join(', ') || 'see stack lists'}.`,
+          allThree.length
+            ? `Appearing in all three: ${allThree.join(', ')} — that's the spine of the practice.`
+            : '',
+          `Portfolio-wide he also lists databases and deploy tools (PostgreSQL, MongoDB, Docker, Vercel, Netlify, Render) even when a given project's public stack card is thinner.`,
+        ].filter(Boolean).join('\n\n');
+      }
+
+      case 'design_philosophy':
+        return [
+          `Common design philosophy: **clear layer ownership, AI grounded in real inputs, ship the whole product.**`,
+          `Frontend is a client over REST. Backend owns correctness. AI explains or decides against real schema/resume/repo context. Data stays source of truth. Deploy is reproducible.`,
+          `You see that same spine in ${scores.map((s) => name(byId(s.id))).join(', ')}.`,
+        ].join('\n\n');
+
+      default:
+        return null;
+    }
+  },
+
+  _projectEvidenceScores(projects) {
+    // Lightweight, evidence-only scoring for internal ranking — not shown as fake metrics.
+    return (projects || []).map((p) => {
+      let score = 0;
+      const stack = p.stack || [];
+      if (stack.some((s) => /python|flask|fastapi|rest/i.test(s))) score += 2;
+      if (stack.some((s) => /llm/i.test(s))) score += 2;
+      if (stack.some((s) => /react|typescript/i.test(s))) score += 1;
+      if (p.live) score += 2;
+      if (p.repo) score += 2;
+      if ((p.decisions || []).length) score += 1;
+      return { id: p.id, score };
+    }).sort((a, b) => b.score - a.score);
+  },
+
+  _capabilityVoice() {
+    const caps = ASSISTANT_CAPABILITIES.map((c) => c.label).join(', ');
+    return [
+      `I can explain Sudhanshu's projects, compare technologies, discuss architecture and trade-offs, answer recruiter questions, judge which work best demonstrates a skill, match a job description against his stack, and run lightweight interview practice.`,
+      `Capabilities in practice: ${caps}.`,
+      `If something isn't in his portfolio, I'll say so instead of guessing.`,
+    ].join('\n\n');
+  },
+
+  _identityVoice(profile) {
+    return [
+      `I'm SRIIVERSE AI — a private guide to ${profile?.name || 'Sudhanshu'}'s portfolio.`,
+      this._capabilityVoice(),
+    ].join('\n\n');
+  },
+
   /**
    * Per-block dispatcher. Unrecognized block types, and renderer functions
    * that throw, both degrade to the documented failure mode (§8, Stage 8
@@ -1193,6 +1639,10 @@ const LocalProvider = {
         `Hey! 👋 I'm SRIIVERSE AI — ${profile.name}'s portfolio assistant. Ask me about his projects, his stack, or say "who are you" to see everything I can do.`,
         `Hi there! I'm SRIIVERSE AI. I can walk you through ${profile.name}'s shipped projects, match a job description against his skills, or run a quick interview practice — where would you like to start?`,
       ]);
+    } else if (text === SELF_MODEL.nature) {
+      text = this._identityVoice(getProfile());
+    } else if (text === SELF_MODEL.connectivity) {
+      text = "I don't call out to any external API — everything I know about Sudhanshu's work is already available in this page.";
     } else {
       const trimmed = text.trim();
       if (trimmed.length <= 60 && /:$/.test(trimmed)) text = `**${trimmed}**`;
@@ -1383,7 +1833,7 @@ const LocalProvider = {
   _renderHonestDecline(block) {
     const redirect = block.data?.redirect;
     const REASON_TEXT = {
-      'no-data': "This information isn't documented in the portfolio.",
+      'no-data': "I don't have that in Sudhanshu's portfolio.",
       // Shorter when a redirect follows (planning.js's own
       // `honestDeclineBlock('ambiguous-subject', redirect)` always supplies
       // one) — the full "who or what you mean" phrasing already appears in
@@ -1391,27 +1841,34 @@ const LocalProvider = {
       // repeating it in the lead would read as asking the same question
       // twice in one breath.
       'ambiguous-subject': redirect ? "I'm not sure who you mean." : "I'm not sure who or what you mean by that.",
-      'out-of-scope': "That's outside what I can speak to from this portfolio.",
+      'out-of-scope': "That's outside what I can speak to from his work here.",
     };
     const reason = block.data?.reason;
     const explicitText = block.data?.text;
     const lead = explicitText || REASON_TEXT[reason] || REASON_TEXT['no-data'];
     const defaultRedirect = (!redirect && reason === 'no-data')
-      ? `Try asking about his projects, architecture, tech stack, why hire Sudhanshu, or say "open a project demo".`
+      ? `Ask me about his projects, architecture, stack, why hire him, or say "open a project demo".`
       : null;
     const fragment = redirect ? `${lead} ${redirect}` : (defaultRedirect ? `${lead} ${defaultRedirect}` : lead);
     return { fragment, sourcesForBlock: [] };
   },
 
-  /** §7.8 — self-referential fact, verbatim. Always paired with a
-   *  `DirectAnswer` per the spec's render behavior note; when
-   *  `planning.js` sets both blocks' text to the same authored
-   *  `SELF_MODEL` string, `_renderPlan`'s dedup (see its own docstring)
-   *  keeps the sentence from printing twice. */
-  _renderSelfModel(block) {
+  /** §7.8 — self-referential fact. Sprint 1.5 rewrites implementation voice
+   *  into capability-first speech when the authored SELF_MODEL string still
+   *  uses retrieval/doc framing (planning remains frozen). */
+  _renderSelfModel(block, ctx) {
     const text = block.data?.text;
     if (!text) return null;
-    return { fragment: text, sourcesForBlock: [] };
+    const aspect = block.data?.aspect;
+    let spoken = text;
+    if (aspect === 'nature' || text === SELF_MODEL.nature) {
+      spoken = this._identityVoice(getProfile());
+    } else if (aspect === 'connectivity' || text === SELF_MODEL.connectivity) {
+      spoken = "I don't call out to any external API — everything I know about Sudhanshu's work is already available in this page.";
+    } else if (aspect === 'memory' || text === SELF_MODEL.memory) {
+      spoken = SELF_MODEL.memory;
+    }
+    return { fragment: spoken, sourcesForBlock: [] };
   },
 
   /** §7.9 — not emitted by `planning.js` in this phase (its plan-building
