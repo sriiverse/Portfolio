@@ -815,6 +815,13 @@ const LocalProvider = {
    *      formatting decision, not a content decision: no fact, ordering,
    *      or confidence outcome changes, only whether an identical string
    *      is printed once or twice.
+   *
+   * Version 3 Sprint 1 — after fragments are assembled, a conversational
+   * move is selected from the *already-built* plan + `questionFrame`
+   * (never by re-classifying the query), and presentation-only dialogue
+   * framing is applied (Answer-before-prove leads, Clarify wording,
+   * Decline+Pivot, Invite). Facts, sources, kind overrides, and block
+   * order are unchanged. See docs/V3_CONVERSATIONAL_ARCHITECTURE.md.
    */
   _renderPlan(plan, ctx) {
     if (!plan || !Array.isArray(plan.blocks)) {
@@ -862,9 +869,267 @@ const LocalProvider = {
     }
 
     const sources = plan.sourcesOverride || this._dedupeSources(sourcesAcc);
-    if (followupHint) payload = Object.assign({}, payload, { _followupHint: followupHint });
+    const move = this._selectConversationalMove(plan, ctx);
+    const spoken = this._applyConversationalMove(paragraphs, move, plan, ctx);
+    if (followupHint || move) {
+      payload = Object.assign({}, payload, {
+        ...(followupHint ? { _followupHint: followupHint } : {}),
+        _conversationalMove: move,
+      });
+    }
 
-    return { text: paragraphs.join('\n\n'), sources, kind, payload };
+    return { text: spoken, sources, kind, payload };
+  },
+
+  /* ============================================================
+     V3 SPRINT 1 — CONVERSATIONAL MOVES (composition-only)
+     docs/V3_CONVERSATIONAL_ARCHITECTURE.md §3
+
+     Selects a primary dialogue move from the frozen ResponsePlan +
+     questionFrame already on ctx. Never re-runs understanding, entity
+     resolution, evidence, confidence, or planning. May only change how
+     the already-authorized text is spoken (leads, clarify phrasing,
+     decline+pivot, invite). Deepen / visitor depth / discourse memory
+     are out of Sprint 1 scope.
+     ============================================================ */
+
+  /**
+   * Primary-move selection — mirrors V3 §3.10 using plan shape only.
+   * Returns one of: Greeting | Clarify | Decline | Compare | Recommend | Answer
+   * (Pivot and Invite are secondary framings applied onto Decline/Answer/etc.)
+   */
+  _selectConversationalMove(plan, ctx) {
+    const qType = ctx?.questionFrame?.questionType || null;
+    const blocks = plan?.blocks || [];
+    const types = blocks.map((b) => b.type);
+    const decline = blocks.find((b) => b.type === 'HonestDecline');
+
+    if (qType === 'Greeting') return 'Greeting';
+    if (decline?.data?.reason === 'ambiguous-subject') return 'Clarify';
+    if (types.includes('Comparison')) return 'Compare';
+    if (decline || (types.includes('GapDisclosure') && !types.includes('Evidence') && !types.includes('Comparison'))) {
+      return 'Decline';
+    }
+    // Negative DirectAnswer + GapDisclosure (owned-gap skill checks) is still
+    // a Decline move conversationally — Version 2 already decided the gap.
+    const direct = blocks.find((b) => b.type === 'DirectAnswer');
+    if (direct?.data?.polarity === 'negative' && types.includes('GapDisclosure')) return 'Decline';
+    if (qType === 'Recruiter' || qType === 'Recommendation') return 'Recommend';
+    return 'Answer';
+  },
+
+  /**
+   * Presentation-only dialogue framing. Does not add portfolio facts.
+   * Pivot targets are limited to already-public portfolio surface areas
+   * (projects / architecture / stack / demos) — never new claims.
+   */
+  _applyConversationalMove(paragraphs, move, plan, ctx) {
+    let parts = paragraphs.filter((p) => p && String(p).trim());
+    if (!parts.length) return '';
+
+    switch (move) {
+      case 'Greeting':
+        // Variants already embed an Invite; no extra footer.
+        return parts.join('\n\n');
+
+      case 'Clarify':
+        return this._converseClarify(parts, plan);
+
+      case 'Decline':
+        return this._converseDeclineWithPivot(parts, plan, ctx);
+
+      case 'Compare':
+        return this._converseCompare(parts, plan, ctx);
+
+      case 'Recommend':
+        return this._converseRecommend(parts, plan, ctx);
+
+      case 'Answer':
+      default:
+        return this._converseAnswer(parts, plan, ctx);
+    }
+  },
+
+  /** Strip robotic doc-export leads; keep answer-before-prove order intact. */
+  _converseAnswer(parts, plan, ctx) {
+    const qType = ctx?.questionFrame?.questionType;
+    let out = parts.map((p, i) => {
+      if (i !== 0) return p;
+      return this._softenDocumentaryLead(p, { preferGone: qType === 'SkillVerification' || /^(Yes —)/.test(p) });
+    });
+
+    const invite = this._inviteFor(plan, ctx, 'Answer');
+    if (invite && !this._alreadyEndsWithInvite(out)) out = out.concat(invite);
+    return out.join('\n\n');
+  },
+
+  /** Clarify: one short question turn — drop generic portfolio suggestion lists. */
+  _converseClarify(parts) {
+    // Prefer the planner's redirect question; keep the lead + redirect only.
+    const text = parts.join(' ').replace(/\s+/g, ' ').trim();
+    // If a generic "try asking about..." trailer leaked in, drop it for Clarify.
+    const cleaned = text
+      .replace(/\s*Try asking about his projects, architecture, tech stack, why hire Sudhanshu, or say "open a project demo"\.?/i, '')
+      .trim();
+    return cleaned;
+  },
+
+  /**
+   * Decline + optional Pivot. Honesty text stays; pivot only offers nearby
+   * portfolio threads (never invents the missing fact).
+   */
+  _converseDeclineWithPivot(parts, plan, ctx) {
+    let out = parts.slice();
+    const decline = (plan?.blocks || []).find((b) => b.type === 'HonestDecline');
+    const gap = (plan?.blocks || []).find((b) => b.type === 'GapDisclosure');
+    const reason = decline?.data?.reason;
+    const gapText = (gap?.data?.items || []).join(' ') || out[0] || '';
+
+    // Gap-tech declines: keep honesty; upgrade only the stock no-data suggestion
+    // list into a Pivot-shaped offer (never invent the missing fact).
+    if (decline && reason === 'no-data') {
+      out = out.map((p, i) => {
+        if (i !== 0) return p;
+        return p.replace(
+          /Try asking about his projects, architecture, tech stack, why hire Sudhanshu, or say "open a project demo"\.?/i,
+          'Closest useful threads from here: his shipped projects, the five-layer architecture, or his production stack.',
+        );
+      });
+    }
+
+    const pivot = this._pivotForGap(gapText, ctx);
+    if (pivot && !this._alreadyEndsWithInvite(out)) out = out.concat(pivot);
+
+    const invite = this._inviteFor(plan, ctx, 'Decline');
+    // Avoid stacking pivot + invite when pivot already asks a question.
+    if (invite && pivot && /\?/.test(pivot)) {
+      /* pivot carries the invite */
+    } else if (invite && !this._alreadyEndsWithInvite(out)) {
+      out = out.concat(invite);
+    }
+    return out.join('\n\n');
+  },
+
+  _converseCompare(parts, plan, ctx) {
+    let out = parts.map((p, i) => {
+      if (i !== 0) return p;
+      // "Comparing X and Y:" → spoken contrast lead (same entities, no new claims).
+      const m = /^(?:\*\*)?Comparing\s+(.+?)\s+and\s+(.+?):?(?:\*\*)?\s*$/i.exec(p.trim());
+      if (m) return `Here's how I'd contrast ${m[1].trim()} and ${m[2].trim()}:`;
+      return this._softenDocumentaryLead(p, { preferGone: false });
+    });
+    const invite = this._inviteFor(plan, ctx, 'Compare');
+    if (invite && !this._alreadyEndsWithInvite(out)) out = out.concat(invite);
+    return out.join('\n\n');
+  },
+
+  _converseRecommend(parts, plan, ctx) {
+    let out = parts.map((p, i) => {
+      if (i !== 0) return p;
+      const softened = this._softenDocumentaryLead(p, { preferGone: true });
+      // If the lead vanished (it was only the documentary opener), the next
+      // paragraph already carries the hire/recommend substance — fine.
+      return softened;
+    }).filter((p) => p && String(p).trim());
+
+    if (!out.length) out = parts.slice();
+
+    // Ensure a recommend-shaped invite when missing.
+    const invite = this._inviteFor(plan, ctx, 'Recommend');
+    if (invite && !this._alreadyEndsWithInvite(out)) out = out.concat(invite);
+    return out.join('\n\n');
+  },
+
+  /**
+   * Softens Version 2's documentary DirectAnswer leads without adding claims.
+   * `preferGone: true` removes a lead that is *only* the documentary opener.
+   */
+  _softenDocumentaryLead(text, { preferGone } = {}) {
+    const raw = String(text || '');
+    const trimmed = raw.trim();
+    // Exact documentary opener (optionally bolded).
+    if (/^\*{0,2}Based on what is documented:\*{0,2}$/i.test(trimmed)) {
+      return preferGone ? '' : 'From his portfolio:';
+    }
+    // Opener glued onto the same paragraph (inline evidence join).
+    if (/^\*{0,2}Based on what is documented:\*{0,2}\s+/i.test(trimmed)) {
+      return trimmed.replace(/^\*{0,2}Based on what is documented:\*{0,2}\s+/i, '');
+    }
+    return raw;
+  },
+
+  _alreadyEndsWithInvite(parts) {
+    const last = String(parts[parts.length - 1] || '');
+    return /\?\s*$/.test(last.trim()) || /would you like|want me to|ask me|open (a |any )?project|where would you/i.test(last);
+  },
+
+  /**
+   * Pivot after a gap/decline — only to public portfolio surface areas.
+   * Uses gap prose already in the plan to stay on-thread; does not claim
+   * the missing skill.
+   */
+  _pivotForGap(gapText, ctx) {
+    const t = String(gapText || '');
+    if (/kubernetes|aws|azure|gcp|rust|graphql|kafka|terraform|django|redis/i.test(t)) {
+      return this._pickVariant(ctx?.memory, 'v3-pivot-gap-tech', [
+        'If useful, I can walk through the deployment and cloud-adjacent tools he does ship — Docker, Vercel, Netlify, Render — or open a project demo.',
+        'Closest grounded thread: his production deployment layer (Docker / Vercel / Netlify / Render), or a shipped project walkthrough.',
+      ]);
+    }
+    if (/educational|degree|gpa|salary|notice period|manager/i.test(t)) {
+      return null; // Clarify/Decline already handled; no fake personal pivot
+    }
+    return null;
+  },
+
+  /**
+   * Single-thread Invite — one natural fork, not a chip wall.
+   * Wording is presentation-only; targets are existing portfolio capabilities.
+   */
+  _inviteFor(plan, ctx, move) {
+    const qType = ctx?.questionFrame?.questionType;
+    const blocks = plan?.blocks || [];
+    const hasComparison = blocks.some((b) => b.type === 'Comparison');
+    const hasProjectCard = blocks.some((b) => b.type === 'Evidence') && this._resolveSingleProjectFromFacts(
+      (blocks.find((b) => b.type === 'Evidence')?.data?.facts) || [],
+    );
+    const primary = ctx?.entities?.primaryEntity;
+
+    if (move === 'Compare' || hasComparison) {
+      return this._pickVariant(ctx?.memory, 'v3-invite-compare', [
+        'Want me to relate that back to a shipped project, or compare a different pair?',
+        'Should I show where this shows up in his projects next?',
+      ]);
+    }
+    if (move === 'Recommend' || qType === 'Recruiter') {
+      return this._pickVariant(ctx?.memory, 'v3-invite-recommend', [
+        'Want me to open the strongest project demo for that fit, or match a job description next?',
+        'I can open a project demo, or we can walk the five-layer architecture — which helps more?',
+      ]);
+    }
+    if (hasProjectCard) {
+      return this._pickVariant(ctx?.memory, 'v3-invite-project', [
+        'Want the architecture decisions next, or should I open the live demo?',
+        'Should I go deeper on how it was built, or open the demo?',
+      ]);
+    }
+    if (qType === 'SkillVerification' && primary?.ownership === 'owned') {
+      return this._pickVariant(ctx?.memory, 'v3-invite-skill-yes', [
+        'Want a project where that shows up, or the broader stack view?',
+        'I can point at a shipped system that uses it, or outline the full stack — your call.',
+      ]);
+    }
+    if (qType === 'ArchitectureExplanation') {
+      return this._pickVariant(ctx?.memory, 'v3-invite-arch', [
+        'Want this applied to a specific project, or a comparison of backend choices?',
+      ]);
+    }
+    if (move === 'Answer' && (qType === 'TechnologyExplanation' || qType === 'Experience')) {
+      return this._pickVariant(ctx?.memory, 'v3-invite-generic', [
+        'Want a project walkthrough next, or a hiring-fit angle?',
+      ]);
+    }
+    return null;
   },
 
   /**
