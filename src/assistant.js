@@ -265,6 +265,16 @@ function buildFollowups(intent, payload, focusProject, questionFrame) {
       f.push(`Tech stack decisions for ${proj.name}?`);
     }
     f.push('Explain the five-layer architecture');
+  } else if (profile.type === 'founder') {
+    f.push('Would he fit a startup?');
+    if (proj) f.push(`Open the ${proj.name} live demo`);
+    else f.push('Which project shows end-to-end ownership?');
+    f.push('Why hire Sudhanshu?');
+  } else if (profile.type === 'student') {
+    f.push('Explain the architecture simply');
+    f.push('What should he learn next?');
+    if (proj) f.push(`How was ${proj.name} built?`);
+    else f.push('Show me his projects');
   } else {
     // Reasoning-engine migration (docs/REASONING_ENGINE_SPEC.md Section 3.1,
     // "Read by" list): classifyIntent() no longer returns a semantic label

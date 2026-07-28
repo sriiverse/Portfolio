@@ -15,13 +15,28 @@
 
 import { retrieve, getDoc, getProfile, getAllProjects, getStack } from './knowledge.js';
 import { analyzeJobDescription } from './jdmatch.js';
-import { ASSISTANT_CAPABILITIES, TECH_TAKES, SELF_MODEL } from './persona.js';
+import {
+  ASSISTANT_CAPABILITIES,
+  TECH_TAKES,
+  SELF_MODEL,
+  DIGITAL_BRAIN,
+  WELCOME_VARIANTS,
+} from './persona.js';
 import {
   classifyReasoningStrategy,
   synthesizeReasoning,
   mayOverrideDecline,
   DECISION_FIRST_STRATEGIES,
 } from './reasoning.js';
+import { finalizeWithReflection } from './reflection.js';
+import {
+  adaptDraft,
+  resolveAudienceMode,
+  fillWelcome,
+  getWelcomeTemplates,
+  pickAudienceInvite,
+  buildProjectAudienceCallout,
+} from './adaptive.js';
 
 /* ============================================================
    CONFIG
@@ -41,8 +56,8 @@ export function getConfig() {
 function buildSystemPrompt(profile) {
   const name = profile.name;
   return [
-    `You are SRIIVERSE AI — the digital representation of ${name}, a Python backend engineer, AI developer, and full-stack engineer.`,
-    `You are NOT a chatbot. You are the intelligent operating system of ${name}'s portfolio.`,
+    `You are SRIIVERSE AI — the digital engineering brain of ${name}, a Python backend engineer, AI developer, and full-stack engineer.`,
+    `You are NOT a chatbot or FAQ. You are the intelligent operating system of ${name}'s portfolio.`,
     `You think, communicate, and reason exactly as ${name} would during a live technical walkthrough or engineering interview.`,
     ``,
     `CORE RULES:`,
@@ -50,6 +65,7 @@ function buildSystemPrompt(profile) {
     `2. Never invent technologies, metrics, employers, or experience that are not in the context.`,
     `3. Explain engineering decisions — not just features. Always answer What → Why → How → Trade-offs.`,
     `4. Be concise and confident. Write like an engineer, not a marketer.`,
+    `5. Adapt emphasis to the visitor: recruiter (fit/demos), engineer (trade-offs), founder (ownership/ship speed), student (teaching clarity).`,
     `5. Use markdown formatting. Structure responses with headers, bullets, and code where relevant.`,
     `6. Cite sources as [n] referencing the numbered context chunks.`,
     `7. End every substantive response with 2-3 meaningful follow-up suggestions.`,
@@ -101,7 +117,17 @@ const LocalProvider = {
 
   async generate(query, ctx = {}) {
     await sleep(280 + Math.random() * 220);
+    // Compose → Adaptive audience mode → Reflection (before render return).
+    const draft = await this._draftAnswer(query, ctx);
+    const adapted = adaptDraft(draft, { ...ctx, query });
+    return finalizeWithReflection(adapted, { ...ctx, query });
+  },
 
+  /**
+   * Compose a draft answer (plan render / legacy routes). Reflection runs
+   * in `generate()` after this returns — do not call reflection here.
+   */
+  async _draftAnswer(query, ctx = {}) {
     // Job Description Matching short-circuits retrieval entirely — it's a
     // scoring operation over the raw pasted text, not a knowledge lookup.
     // Deliberately checked BEFORE the plan branch below and never migrated
@@ -228,20 +254,33 @@ const LocalProvider = {
      ============================================================ */
   _greetingResponse(ctx) {
     const profile = getProfile();
-    const text = this._pickVariant(ctx.memory, 'greeting', [
-      `Hey! 👋 I'm SRIIVERSE AI — ${profile.name}'s portfolio assistant. Ask me about his projects, his stack, or say "who are you" to see everything I can do.`,
-      `Hi there! I'm SRIIVERSE AI. I can walk you through ${profile.name}'s shipped projects, match a job description against his skills, or run a quick interview practice — where would you like to start?`,
-    ]);
-    return { text, sources: [], kind: 'text', payload: null };
+    const text = this._professionalWelcome(ctx, profile);
+    return {
+      text,
+      sources: [],
+      kind: 'text',
+      payload: { _conversationalMove: 'Greeting', _digitalBrain: DIGITAL_BRAIN.title },
+    };
+  },
+
+  /** Digital Engineering Brain professional welcome (no casual chatbot hello). */
+  _professionalWelcome(ctx, profile = getProfile()) {
+    const templates = getWelcomeTemplates().map((t) => fillWelcome(t, profile.name));
+    const variants = templates.length
+      ? templates
+      : WELCOME_VARIANTS.map((t) => fillWelcome(t, profile.name));
+    return this._pickVariant(ctx?.memory, 'greeting-brain', variants);
   },
 
   _identityResponse() {
     const profile = getProfile();
     const projects = getAllProjects();
     const text = [
-      `## Hi, I'm SRIIVERSE AI 👋`,
+      `## ${DIGITAL_BRAIN.brand}`,
       ``,
-      `I'm the AI assistant built into ${profile.name}'s portfolio. ${profile.tagline}`,
+      DIGITAL_BRAIN.nature,
+      ``,
+      profile.tagline || '',
       ``,
       `### What I Can Do`,
       ASSISTANT_CAPABILITIES.map((c) => `- ${c.icon} **${c.label}** — ${c.desc}`).join('\n'),
@@ -249,9 +288,16 @@ const LocalProvider = {
       `### Three Live Systems`,
       projects.map((p) => `- **${p.name}** — ${p.tagline}`).join('\n'),
       ``,
-      `Ask me anything — try "Why hire Sudhanshu?", "Explain the architecture", or paste a job description to match.`,
-    ].join('\n');
-    return { text, sources: [], kind: 'text', payload: null };
+      DIGITAL_BRAIN.purpose,
+      ``,
+      `Ask about depth, hiring fit, architecture, or paste a job description to match.`,
+    ].filter((line, i, arr) => !(line === '' && arr[i - 1] === '')).join('\n');
+    return {
+      text,
+      sources: [],
+      kind: 'text',
+      payload: { _digitalBrain: DIGITAL_BRAIN.title },
+    };
   },
 
   /**
@@ -458,10 +504,18 @@ const LocalProvider = {
         `[Open Demo ↗](${proj.live})`,
       ].join('\n');
     }
-    // Full project response — core engineering narrative
-    const recruiterSection = (visitorProfile?.type === 'recruiter')
-      ? `\n\n### 🎯 Why This Matters for Your Hire\nThis project demonstrates **${this._recruiterRelevance(proj, visitorProfile, memory)}**. It's not a prototype — it's live in production.`
-      : '';
+    // Full project response — core engineering narrative + audience callout
+    const modeId = resolveAudienceMode({
+      visitorProfile,
+      memory,
+      questionFrame: null,
+    });
+    // Prefer explicit visitorProfile.type when project cards render mid-session.
+    const effectiveMode = (visitorProfile?.type && visitorProfile.type !== 'unknown')
+      ? visitorProfile.type
+      : modeId;
+    const relevance = this._recruiterRelevance(proj, visitorProfile, memory);
+    const audienceSection = buildProjectAudienceCallout(proj, effectiveMode, relevance);
 
     return [
       `## ${proj.name}`,
@@ -480,7 +534,7 @@ const LocalProvider = {
       ``,
       `### ✨ Key Capabilities`,
       proj.features.slice(0, 4).map((f) => `- **${f.title}** — ${f.desc}`).join('\n'),
-      recruiterSection,
+      audienceSection,
       ``,
       `### 🔗 Live`,
       `[Open Demo ↗](${proj.live})${proj.repo ? ` · [GitHub ↗](${proj.repo})` : ''}`,
@@ -1168,6 +1222,11 @@ const LocalProvider = {
       (blocks.find((b) => b.type === 'Evidence')?.data?.facts) || [],
     );
     const primary = ctx?.entities?.primaryEntity;
+    const modeId = resolveAudienceMode(ctx);
+    const audienceInvite = pickAudienceInvite(modeId, move, ctx);
+    if (audienceInvite && modeId !== 'default') {
+      return this._pickVariant(ctx?.memory, `v4-invite-${modeId}-${move}`, [audienceInvite]);
+    }
 
     if (move === 'Compare' || hasComparison) {
       return this._pickVariant(ctx?.memory, 'v3-invite-compare', [
@@ -1260,12 +1319,13 @@ const LocalProvider = {
   },
 
   _capabilityVoice() {
-    return synthesizeReasoning({ strategy: 'Summarize', task: 'capabilities' }, '', {});
+    return synthesizeReasoning({ strategy: 'Summarize', task: 'capabilities' }, '', {})
+      || DIGITAL_BRAIN.nature;
   },
 
   _identityVoice(profile) {
     return synthesizeReasoning({ strategy: 'Summarize', task: 'identity' }, '', { questionFrame: { questionType: 'Identity' } })
-      || `I'm SRIIVERSE AI — a private guide to ${profile?.name || 'Sudhanshu'}'s portfolio.`;
+      || `I'm ${DIGITAL_BRAIN.brand} — the digital engineering brain of ${profile?.name || 'Sudhanshu Sinha'}.`;
   },
 
   /**
@@ -1324,15 +1384,11 @@ const LocalProvider = {
     if (block.data?.polarity === 'negative') text = text.replace(/^yes\b[,:]?\s*/i, '');
 
     if (ctx?.questionFrame?.questionType === 'Greeting') {
-      const profile = getProfile();
-      text = this._pickVariant(ctx.memory, 'greeting', [
-        `Hey! 👋 I'm SRIIVERSE AI — ${profile.name}'s portfolio assistant. Ask me about his projects, his stack, or say "who are you" to see everything I can do.`,
-        `Hi there! I'm SRIIVERSE AI. I can walk you through ${profile.name}'s shipped projects, match a job description against his skills, or run a quick interview practice — where would you like to start?`,
-      ]);
-    } else if (text === SELF_MODEL.nature) {
+      text = this._professionalWelcome(ctx, getProfile());
+    } else if (text === SELF_MODEL.nature || text === DIGITAL_BRAIN.nature) {
       text = this._identityVoice(getProfile());
-    } else if (text === SELF_MODEL.connectivity) {
-      text = "I don't call out to any external API — everything I know about Sudhanshu's work is already available in this page.";
+    } else if (text === SELF_MODEL.connectivity || text === DIGITAL_BRAIN.connectivity) {
+      text = DIGITAL_BRAIN.connectivity;
     } else {
       const trimmed = text.trim();
       if (trimmed.length <= 60 && /:$/.test(trimmed)) text = `**${trimmed}**`;
@@ -1551,12 +1607,12 @@ const LocalProvider = {
     if (!text) return null;
     const aspect = block.data?.aspect;
     let spoken = text;
-    if (aspect === 'nature' || text === SELF_MODEL.nature) {
+    if (aspect === 'nature' || text === SELF_MODEL.nature || text === DIGITAL_BRAIN.nature) {
       spoken = this._identityVoice(getProfile());
-    } else if (aspect === 'connectivity' || text === SELF_MODEL.connectivity) {
-      spoken = "I don't call out to any external API — everything I know about Sudhanshu's work is already available in this page.";
-    } else if (aspect === 'memory' || text === SELF_MODEL.memory) {
-      spoken = SELF_MODEL.memory;
+    } else if (aspect === 'connectivity' || text === SELF_MODEL.connectivity || text === DIGITAL_BRAIN.connectivity) {
+      spoken = DIGITAL_BRAIN.connectivity;
+    } else if (aspect === 'memory' || text === SELF_MODEL.memory || text === DIGITAL_BRAIN.memory) {
+      spoken = DIGITAL_BRAIN.memory;
     }
     return { fragment: spoken, sourcesForBlock: [] };
   },
