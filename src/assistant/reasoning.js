@@ -30,6 +30,7 @@ import {
   getEngineeringIdentity,
   getIdentityClaimsByFacet,
 } from './identity.js';
+import { classifyConversationMode, isBoundFollowUpQuery } from './conversation.js';
 
 export const REASONING_STRATEGIES = [
   'Describe', 'Explain', 'Compare', 'Recommend', 'Evaluate',
@@ -204,13 +205,62 @@ export function topByObjective(profiles, weights) {
 export function classifyReasoningStrategy(query, ctx = {}) {
   const t = String(query || '').toLowerCase().trim();
   const qType = ctx?.questionFrame?.questionType;
+  const mode = ctx?.questionFrame?.conversationMode || classifyConversationMode(query);
 
   if (!t) return { strategy: 'Describe', task: null };
 
+  // --- V4.5 Mod 1: conversational intent gate (wins over entity/FAANG misfires) ---
+  if (mode === 'preference_gap') {
+    return { strategy: 'Summarize', task: 'preference_gap' };
+  }
+  if (mode === 'challenge') {
+    return { strategy: 'Critique', task: 'challenge_response' };
+  }
+  if (mode === 'self') {
+    return { strategy: 'Critique', task: 'self_behavioral' };
+  }
+  if (mode === 'ops_story') {
+    return { strategy: 'Explain', task: 'ops_story' };
+  }
+  if (mode === 'opinion') {
+    return { strategy: 'Infer', task: 'opinion_take' };
+  }
+  if (mode === 'brief') {
+    return { strategy: 'Summarize', task: 'brief_pitch' };
+  }
+  if (mode === 'probe') {
+    if (/failure mode/i.test(t)) return { strategy: 'Explain', task: 'probe_failure_modes' };
+    if (/scale|qps|rps/i.test(t)) return { strategy: 'Explain', task: 'probe_scale' };
+    if (/complexity/i.test(t)) return { strategy: 'Explain', task: 'probe_complexity' };
+    if (/hardest/i.test(t)) return { strategy: 'Explain', task: 'probe_hardest' };
+    return { strategy: 'Explain', task: 'probe_failure_modes' };
+  }
+
+  // --- V4.5 Mod 2: bound follow-ups inherit prior commitment ---
+  const mem = ctx?.memory;
+  const boundId = mem?.lastCommitment?.projectId || mem?.lastProject || null;
+  const prevTask = mem?.activeMode || mem?.lastCommitment?.task || '';
+  if (boundId && isBoundFollowUpQuery(query)) {
+    if (/hardest/i.test(t)) {
+      return { strategy: 'Explain', task: 'probe_hardest' };
+    }
+    if (/flask/i.test(t)) {
+      return { strategy: 'Explain', task: 'why_flask' };
+    }
+    if (/fastapi/i.test(t)) {
+      return { strategy: 'Explain', task: 'why_fastapi' };
+    }
+    if (/why that|why this|^(and )?why\b|so why/i.test(t)
+      || /interview_first|recruiter_impress|best_work|faang_interview|demo_|keep_two|recommend/i.test(prevTask)) {
+      return { strategy: 'Justify', task: 'followup_why_pick' };
+    }
+  }
+
+  // Word-boundary on "you" — "what are your weaknesses" must not match identity
   if (/what can you do|what do you (do|offer|help with)|your capabilities|how can you help/i.test(t)) {
     return { strategy: 'Summarize', task: 'capabilities' };
   }
-  if (/who are you|what are you|are you (an? )?(ai|assistant|bot|chatgpt)/i.test(t)
+  if (/who are you\b|what are you\b|are you (an? )?(ai|assistant|bot|chatgpt)\b/i.test(t)
     || (qType === 'Identity' && !/remember|memory|external|api|llm|how.*(work|built)|what can you do|what do you do|who is sudhanshu|tell me about sudhanshu/i.test(t))) {
     return { strategy: 'Summarize', task: 'identity' };
   }
@@ -236,7 +286,8 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Justify', task: 'why_hire' };
   }
 
-  if (/faang|big tech|tier-?1|google|meta|amazon|apple|netflix|impress.*(interviewer|hiring|faang)/i.test(t)) {
+  // Interview / impress framing — not employment claims (those are preference_gap above)
+  if (/faang|big tech|tier-?1|impress.*(interviewer|hiring|faang)|(google|meta|amazon|apple|netflix).{0,24}interview|interview.{0,24}(google|meta|amazon|apple|netflix|faang)|project for (a )?(google|faang|big tech)/i.test(t)) {
     return { strategy: 'Recommend', task: 'faang_interview', focus: 'softwareEngineering' };
   }
   if (/impress (a )?recruiter|recruiter.*(impress|show|see first)|show (a )?recruiter/i.test(t)) {
@@ -297,7 +348,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Infer', task: 'product_oriented' };
   }
 
-  if (/why flask|flask instead of fastapi|prefer flask|chose flask/i.test(t)) {
+  if (/why flask|flask instead of fastapi|prefer flask|chose flask|keep flask|kept flask/i.test(t)) {
     return { strategy: 'Explain', task: 'why_flask' };
   }
   if (/why fastapi|fastapi instead of flask|prefer fastapi|chose fastapi/i.test(t)) {
@@ -458,6 +509,195 @@ function opCritique(ctx, { mode }) {
   );
 }
 
+/** V4.5 Mod 1 — conversational-mode answers (challenge / self / opinion / gaps / probes). */
+function opConversationMode(ctx, { task }) {
+  const q = String(ctx.query || '').toLowerCase();
+  const qf = ctx.byId('queryforge');
+  const rr = ctx.byId('reporadar');
+  const pp = ctx.byId('placementpro');
+
+  if (task === 'preference_gap') {
+    if (/relocat/i.test(q)) {
+      return speak(ctx.strategy,
+        `I don't have a relocation preference recorded in this portfolio.`,
+        `What I can speak to is role fit — backend / AI platform / full-stack product engineering where shipping matters.`,
+        `If location or remote policy is a hard filter, treat that as outside what this assistant can claim.`);
+    }
+    if (/salary|compensation|pay/i.test(q)) {
+      return speak(ctx.strategy,
+        `I don't publish salary expectations here.`,
+        `Ask about the work instead — shipped systems, stack depth, or which project best matches the role.`);
+    }
+    if (/google|meta|amazon|apple|netflix|microsoft/i.test(q)) {
+      return speak(ctx.strategy,
+        `I haven't worked at that company — nothing in this portfolio claims that employment.`,
+        `Closest signal is how I'd defend ${nm(qf)} under a FAANG-style systems loop, if that's what you're probing.`,
+        `Want that interview framing, or an honest gap list against a job description?`);
+    }
+    if (/phd|certification|aws cert/i.test(q)) {
+      return speak(ctx.strategy,
+        `That isn't recorded in Sudhanshu's portfolio.`,
+        `I can talk about shipped projects, architecture, stack, or production demos instead.`);
+    }
+    return speak(ctx.strategy,
+      `That personal detail isn't in the portfolio.`,
+      `Ask about projects, architecture, stack, or why hire — those I can answer from evidence.`);
+  }
+
+  if (task === 'challenge_response') {
+    if (/flask/i.test(q)) {
+      return speak(ctx.strategy,
+        `I'd concede FastAPI is my default today for new I/O-heavy services — ${nm(rr)} already moved that way.`,
+        `Flask stayed on ${nm(qf)} and ${nm(pp)} because orchestration clarity and an explicit request lifecycle mattered more than async throughput then.`,
+        `Bad choice for a greenfield async ingestion service? Yes. Bad choice for those two ships at the time? I still defend it.`);
+    }
+    if (/thin wrapper|reporadar/i.test(q)) {
+      return speak(ctx.strategy,
+        `Fair push. The thin version of RepoRadar would stop at a summary endpoint.`,
+        `What I actually shipped is layered intelligence — summary → architecture → deep explanation — plus a real FastAPI/React split and a public repo you can inspect.`,
+        `If that still reads thin for your bar, say which layer you want torn apart.`);
+    }
+    if (/over-?engineered|five-?layer|defend/i.test(q)) {
+      return speak(ctx.strategy,
+        `I'd concede three apps don't need enterprise ceremony — the five-layer split is a teaching spine as much as a runtime necessity.`,
+        `What I won't concede: keeping AI as a reasoning layer over real inputs, with backend owning correctness. That separation paid for itself.`,
+        `If I collapsed layers tomorrow, I'd merge deploy concerns first — not AI into the UI.`);
+    }
+    if (/wrapping|just (an? )?llm|aren'?t you just/i.test(q)) {
+      return speak(ctx.strategy,
+        `If it were only a wrapper, the hard part would be the prompt string.`,
+        `The real work is grounding — schema-aware SQL on ${nm(qf)}, resume-anchored advice on ${nm(pp)}, layered repo intelligence on ${nm(rr)}.`,
+        `LLM calls are the engine; correctness against real data is the product.`);
+    }
+    if (/criticiz/i.test(q)) {
+      const target = /reporadar/i.test(q) ? rr : /placement/i.test(q) ? pp : qf;
+      return speak(ctx.strategy,
+        `If I'm criticizing ${nm(target)}, I'd start with eval harnesses and observability — shipped explanation UX before enough offline checks.`,
+        `Second: public docs under-pin some stack choices that the code actually uses.`,
+        `The strength that survives that critique is live systems with grounded AI, not slideware.`);
+    }
+    return speak(ctx.strategy,
+      `I'll take the challenge on the merits.`,
+      `Tell me which project or decision you're attacking and I'll concede what's weak and defend what's still right.`);
+  }
+
+  if (task === 'self_behavioral') {
+    if (/leadership/i.test(q)) {
+      return speak(ctx.strategy,
+        `Leadership here looks like owning the full ship — problem, architecture, AI grounding, and a live URL — not managing a team roster.`,
+        `${nm(qf)}, ${nm(pp)}, and ${nm(rr)} each required end-to-end decisions without a larger org behind them.`,
+        `If you mean people-management leadership, that isn't evidenced in this portfolio.`);
+    }
+    if (/disagreement/i.test(q)) {
+      return speak(ctx.strategy,
+        `I handle disagreement by separating taste from constraints — latency, correctness, and what we can ship this week.`,
+        `In these projects that meant defending grounded AI over flashy generation, and Flask vs FastAPI based on I/O shape rather than fashion.`,
+        `I don't have a corporate conflict story recorded here — only decision trade-offs you can inspect.`);
+    }
+    if (/code review/i.test(q)) {
+      return speak(ctx.strategy,
+        `I'd review for contracts and failure modes first — API shape, auth boundaries, and where the model can lie.`,
+        `Style nits come last. On ${nm(rr)} that means checking the API/UI split stays honest; on ${nm(qf)}, whether SQL stays schema-grounded.`,
+        `No team review transcript lives in this portfolio — that's how I'd show up if you put me on one.`);
+    }
+    if (/regret/i.test(q)) {
+      return speak(ctx.strategy,
+        `I regret under-investing in eval harnesses early on ${nm(qf)} — I shipped explanation UX before enough offline checks for bad SQL.`,
+        `I'd also pin data stores per project more loudly in public docs.`,
+        `Those are documentation and rigor regrets, not "I wish I hadn't shipped."`);
+    }
+    if (/mistake/i.test(q)) {
+      return speak(ctx.strategy,
+        `Early mistake: treating portfolio docs as done when stack pinning was still uneven across cards.`,
+        `Another: optimizing for demo narrative before hardening observability storytelling.`,
+        `Both are fixable process mistakes — the systems still shipped live.`);
+    }
+    return speak(ctx.strategy,
+      `I can talk about ownership and trade-offs from the shipped work.`,
+      `Ask about a specific soft-skill angle — disagreement, review, regret — and I'll stay honest about what's evidenced vs inferred.`);
+  }
+
+  if (task === 'ops_story') {
+    if (/on-?call/i.test(q)) {
+      return speak(ctx.strategy,
+        `I don't have a rotating on-call history recorded in this portfolio.`,
+        `What I do have is production hosting for live products — failures would show up as deploy/runtime issues on Vercel/Render-style surfaces, not a pager rotation story.`,
+        `If you're hiring for SRE on-call muscle, say so — I won't invent pages I never carried.`);
+    }
+    return speak(ctx.strategy,
+      `I don't publish a postmortem log here.`,
+      `Honest production risk areas: LLM cold starts, schema drift breaking NL→SQL, and GitHub API rate limits on ${nm(rr)}.`,
+      `Those are the failure classes I'd expect — not a claim that a specific outage happened.`);
+  }
+
+  if (task === 'opinion_take') {
+    if (/microservice/i.test(q)) {
+      return speak(ctx.strategy,
+        `I haven't shipped a microservice mesh.`,
+        `For these products, a modular monolith with clear service boundaries was enough. I'd split when deploy or scale ownership actually diverges.`,
+        `Microservices as default fashion? Overrated. Microservices as a response to real org/scale seams? Fine.`);
+    }
+    if (/\brag\b|retrieval/i.test(q)) {
+      return speak(ctx.strategy,
+        `Retrieval-augmented generation is useful when you need grounded lookup over a corpus — overrated when people bolt it on instead of fixing product context.`,
+        `My ships lean on structured grounding (schema, resume, repo) more than a classic vector-retrieval brochure.`,
+        `I'd use retrieval over documents when documents are the source of truth; I wouldn't pretend every LLM feature needs it.`);
+    }
+    if (/typescript|worth it/i.test(q)) {
+      return speak(ctx.strategy,
+        `TypeScript is worth it on non-trivial UI surfaces — ${nm(rr)} uses it for a reason.`,
+        `I wouldn't mandate it on every script. For product React code, the contract clarity pays for itself.`);
+    }
+    return speak(ctx.strategy,
+      `I can give a take, scoped to what I've actually shipped.`,
+      `Name the technology or pattern and I'll say whether I've used it — and what I think.`);
+  }
+
+  if (task === 'probe_failure_modes') {
+    return speak(ctx.strategy,
+      `Main AI-layer failure modes I'd worry about: schema drift breaking NL→SQL, overconfident rewrites, and latency under cold LLM starts.`,
+      `On ${nm(qf)} the guard is treating the model as a reasoning layer over the real schema — not a blind generator — and surfacing explanations instead of silent rewrites.`,
+      `${nm(rr)} adds API/rate-limit and shallow-summary failure modes; ${nm(pp)} fails when resume parsing is weak and advice goes generic.`);
+  }
+
+  if (task === 'probe_scale') {
+    return speak(ctx.strategy,
+      `To push toward high QPS I'd scale along existing seams: horizontalize API workers, isolate the AI reasoning path, keep the frontend a thin client.`,
+      `Exact 10k QPS numbers aren't published for these ships — I won't invent SLAs.`,
+      `Bottlenecks I'd expect first: LLM inference, then DB/explain plans on ${nm(qf)}, then upstream API limits on ${nm(rr)}.`);
+  }
+
+  if (task === 'probe_complexity') {
+    return speak(ctx.strategy,
+      `The SQL generation path isn't a closed-form algorithm with a tidy O-notation I measured end-to-end.`,
+      `Cost is dominated by model inference plus schema context size; plan analysis adds DB round-trips, not fancy asymptotic tricks.`,
+      `If you want complexity theater, I won't fake it — ask about grounding and failure modes instead.`);
+  }
+
+  if (task === 'probe_hardest') {
+    const boundId = ctx.ctx?.memory?.lastCommitment?.projectId || ctx.ctx?.memory?.lastProject;
+    const focus = (boundId && ctx.byId(boundId)) || qf;
+    if (focus?.id === 'reporadar') {
+      return speak(ctx.strategy,
+        `Hardest part on ${nm(focus)} was layered intelligence that stays useful — summary → architecture → deep explanation — without collapsing into a generic chat wrapper.`,
+        `Second: keeping the FastAPI/React split honest while GitHub API limits and noisy repos push you toward shallow answers.`,
+        `That's the bar that ship had to clear.`);
+    }
+    if (focus?.id === 'placementpro') {
+      return speak(ctx.strategy,
+        `Hardest part on ${nm(focus)} was keeping advice resume-anchored — specific gaps and roadmaps instead of generic career tips.`,
+        `If parsing is weak, the whole product goes soft. Grounding was the real fight.`,
+        `That's what I had to get right.`);
+    }
+    return speak(ctx.strategy,
+      `Hardest part on ${nm(focus)} was grounding — making SQL and explanations stay honest against a real schema, not the model call itself.`,
+      `Second hardest: knowing when to stop generating and start explaining so developers learn instead of copy-pasting blind rewrites.`,
+      `That's the bar that ship had to clear.`);
+  }
+
+  return null;
+}
+
 /** Infer fit from identity + patterns. */
 function opInfer(ctx, { task }) {
   const prefs = getIdentityClaimsByFacet('architecturalPrefs', ctx.identity);
@@ -616,6 +856,30 @@ function opSummarize(ctx, { task }) {
     ].join('\n\n');
   }
 
+  if (task === 'brief_pitch') {
+    const q = String(ctx.query || '').toLowerCase();
+    if (/talking points|interview/i.test(q)) {
+      return [
+        `Three interview talking points:`,
+        `1. ${nm(ctx.byId('queryforge'))} — schema-grounded SQL/AI, not a blind generator.`,
+        `2. ${nm(ctx.byId('reporadar'))} — live full-stack demo with a public repo.`,
+        `3. Shared five-layer architecture across three production AI ships.`,
+      ].join('\n');
+    }
+    if (/rest|plain english/i.test(q)) {
+      return [
+        `REST, plainly: the UI asks the backend for data over HTTP endpoints — create, read, update, delete style contracts.`,
+        `In these ships, React (or the terminal UI) talks to Flask/FastAPI services that own auth, business logic, and AI orchestration.`,
+        `You see that pattern on ${nm(ctx.byId('queryforge'))}, ${nm(ctx.byId('placementpro'))}, and ${nm(ctx.byId('reporadar'))}.`,
+      ].join('\n\n');
+    }
+    return [
+      `I'm ${ctx.identity.subject?.name || 'Sudhanshu Sinha'} — ${ctx.identity.subject?.title || 'Python backend / AI engineer'}.`,
+      `I ship live AI products: ${ctx.profiles.map(nm).join(', ')}.`,
+      `Strongest proof: open a demo, then ask me about architecture or trade-offs.`,
+    ].join('\n\n');
+  }
+
   if (task === 'identity') {
     return [
       `I'm SRIIVERSE AI — the digital engineering brain of ${subject?.name || 'Sudhanshu Sinha'}.`,
@@ -715,6 +979,28 @@ function opJustify(ctx, { task }) {
     );
   }
 
+  if (task === 'followup_why_pick') {
+    const boundId = ctx.ctx?.memory?.lastCommitment?.projectId
+      || ctx.ctx?.memory?.lastProject
+      || null;
+    const pick = (boundId && ctx.byId(boundId)) || ctx.byId('reporadar') || ctx.profiles[0];
+    const prev = ctx.ctx?.memory?.activeMode || ctx.ctx?.memory?.lastCommitment?.task || '';
+    let why;
+    if (/faang/i.test(prev)) {
+      why = `That pick rewards systems thinking under interview pressure — ${nm(pick)} is where the architecture and trade-offs are easiest to probe.`;
+    } else if (/interview_first|recruiter|best_work/i.test(prev)) {
+      why = `You can open a live demo${pick?.project?.repo ? ' and the public repo' : ''} in the same breath — API/UI split is easy to walk without a long setup.`;
+    } else {
+      why = `It's the commitment I just made — strongest demo/story for what we were ranking.`;
+    }
+    return speak(
+      ctx.strategy,
+      `Because ${nm(pick)} is the one I committed to for that ask.`,
+      why,
+      `If you want the deeper engineering probe instead, say so and I'll switch to that lens.`,
+    );
+  }
+
   return null;
 }
 
@@ -738,13 +1024,20 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   };
 
   // --- Summarize / identity ---
-  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths'].includes(task)) {
+  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'preference_gap'].includes(task)) {
+    if (task === 'preference_gap') return opConversationMode(opCtx, { task });
     return opSummarize(opCtx, { task });
   }
 
   // --- Critique ---
   if (task === 'weakest_area' || task === 'learn_next') {
     return opCritique(opCtx, { mode: task });
+  }
+
+  // --- V4.5 Mod 1 conversational modes ---
+  if (['preference_gap', 'challenge_response', 'self_behavioral', 'ops_story', 'opinion_take',
+    'probe_failure_modes', 'probe_scale', 'probe_complexity', 'probe_hardest'].includes(task)) {
+    return opConversationMode(opCtx, { task });
   }
 
   // --- Infer ---
@@ -758,7 +1051,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   }
 
   // --- Justify ---
-  if (['why_hire', 'strongest_decision', 'justify_best_project'].includes(task)) {
+  if (['why_hire', 'strongest_decision', 'justify_best_project', 'followup_why_pick'].includes(task)) {
     return opJustify(opCtx, { task });
   }
 

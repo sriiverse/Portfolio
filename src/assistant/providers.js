@@ -35,8 +35,11 @@ import {
   fillWelcome,
   getWelcomeTemplates,
   pickAudienceInvite,
+  pickContextualInvite,
+  formatSpokenComparison,
   buildProjectAudienceCallout,
 } from './adaptive.js';
+import { isBoundFollowUpQuery } from './conversation.js';
 
 /* ============================================================
    CONFIG
@@ -368,21 +371,19 @@ const LocalProvider = {
   _techComparisonResponse(strategy) {
     const entry = this._findTechTake(strategy);
     if (!entry) return this._techTakeFallback(strategy);
-    const [a, b] = entry.techs;
+    // V4.5 Phase 2 — spoken-first; table trails as optional detail.
+    const spoken = formatSpokenComparison(entry, { includeTable: true });
     const evidenceLines = this._renderTechEvidence(entry);
     const text = [
-      `## ${a} vs ${b}`,
-      ``,
-      `| Dimension | ${a} | ${b} |`,
-      `|---|---|---|`,
-      entry.dimensions.map((d) => `| ${d.name} | ${d.a} | ${d.b} |`).join('\n'),
-      ``,
-      `### My Take`,
-      entry.preference,
-      entry.groundingNote ? `\n> ${entry.groundingNote}` : '',
-      evidenceLines ? `\n### Where This Shows Up\n${evidenceLines}` : '',
+      spoken,
+      evidenceLines ? `\nWhere this shows up:\n${evidenceLines}` : '',
     ].filter(Boolean).join('\n');
-    return { text, sources: this._techEvidenceSources(entry), kind: 'text', payload: null };
+    return {
+      text,
+      sources: this._techEvidenceSources(entry),
+      kind: 'text',
+      payload: { _conversationalMove: 'Compare' },
+    };
   },
 
   _opinionResponse(strategy) {
@@ -391,14 +392,13 @@ const LocalProvider = {
     const [a, b] = entry.techs;
     const evidenceLines = this._renderTechEvidence(entry);
     const text = [
-      `## ${a} or ${b}?`,
-      ``,
       entry.preference,
       ``,
-      `### The Trade-offs`,
-      entry.dimensions.map((d) => `- **${d.name}** — ${a}: ${d.a} · ${b}: ${d.b}`).join('\n'),
-      entry.groundingNote ? `\n> ${entry.groundingNote}` : '',
-      evidenceLines ? `\n### Where This Shows Up\n${evidenceLines}` : '',
+      `I can see why someone would argue for either ${a} or ${b} — the trade-offs are real.`,
+      ``,
+      entry.dimensions.slice(0, 3).map((d) => `- **${d.name}** — ${a}: ${d.a} · ${b}: ${d.b}`).join('\n'),
+      entry.groundingNote ? `\n${entry.groundingNote}` : '',
+      evidenceLines ? `\nWhere this shows up:\n${evidenceLines}` : '',
     ].filter(Boolean).join('\n');
     return { text, sources: this._techEvidenceSources(entry), kind: 'text', payload: null };
   },
@@ -950,8 +950,25 @@ const LocalProvider = {
       }
     }
 
+    // Mod 2 — follow-ups must not fall through to brochure paragraphs
+    if (!spoken && isBoundFollowUpQuery(qRaw) && ctx?.memory?.lastProject) {
+      const forced = classifyReasoningStrategy(qRaw, ctx);
+      if (forced?.task) {
+        const intel = this._tryPortfolioIntelligence(plan, ctx, move, forced);
+        if (intel?.text) {
+          spoken = intel.text;
+          intelligenceIntent = intel.intent;
+          reasoningMeta = intel.reasoning || null;
+          kind = 'text';
+          Object.assign(classification, forced);
+        }
+      }
+    }
+
     if (!spoken) spoken = this._applyConversationalMove(paragraphs, move, plan, ctx);
     spoken = this._scrubImplementationVoice(spoken, ctx);
+
+    this._bindConversationState(ctx, classification, spoken);
 
     payload = Object.assign({}, payload, {
       ...(followupHint ? { _followupHint: followupHint } : {}),
@@ -961,6 +978,43 @@ const LocalProvider = {
     });
 
     return { text: spoken, sources, kind, payload };
+  },
+
+  /**
+   * V4.5 Mod 2 — persist active project + mode so follow-ups stay bound.
+   */
+  _bindConversationState(ctx, classification, spoken) {
+    const memory = ctx?.memory;
+    if (!memory) return;
+    const task = classification?.task;
+    if (!task || task === 'compare_passthrough') return;
+
+    const text = String(spoken || '');
+    const first = text.split(/\n\n/)[0] || text;
+    const catalog = [
+      { id: 'queryforge', name: 'QueryForgeAI', re: /QueryForgeAI|\bqueryforge\b/i },
+      { id: 'reporadar', name: 'RepoRadarAI', re: /RepoRadarAI|\breporadar\b/i },
+      { id: 'placementpro', name: 'Placement Pro+', re: /Placement Pro\+|\bplacement\s*pro\b/i },
+    ];
+    let projectId = null;
+    for (const p of catalog) {
+      if (p.re.test(first)) { projectId = p.id; break; }
+    }
+    if (!projectId) {
+      for (const p of catalog) {
+        if (p.re.test(text)) { projectId = p.id; break; }
+      }
+    }
+    if (!projectId) projectId = memory.lastProject || null;
+    const name = catalog.find((p) => p.id === projectId)?.name || projectId;
+    const commitment = { projectId, name, task };
+    if (typeof memory.bindConversationState === 'function') {
+      memory.bindConversationState({ projectId, mode: task, commitment });
+    } else {
+      if (projectId) memory.lastProject = projectId;
+      memory.activeMode = task;
+      memory.lastCommitment = commitment;
+    }
   },
 
   /* ============================================================
@@ -1061,7 +1115,12 @@ const LocalProvider = {
    * portfolio threads (never invents the missing fact).
    */
   _converseDeclineWithPivot(parts, plan, ctx) {
-    let out = parts.slice();
+    let out = parts.slice().filter((p) => p && String(p).trim());
+    // Mod 3 — never print the same honesty line twice
+    out = out.filter((p, i, arr) => {
+      const key = String(p).trim().toLowerCase();
+      return !arr.slice(0, i).some((prev) => String(prev).trim().toLowerCase() === key);
+    });
     const decline = (plan?.blocks || []).find((b) => b.type === 'HonestDecline');
     const gap = (plan?.blocks || []).find((b) => b.type === 'GapDisclosure');
     const reason = decline?.data?.reason;
@@ -1080,13 +1139,15 @@ const LocalProvider = {
     }
 
     const pivot = this._pivotForGap(gapText, ctx);
-    if (pivot && !this._alreadyEndsWithInvite(out)) out = out.concat(pivot);
+    if (pivot && !this._alreadyEndsWithInvite(out) && !out.some((p) => String(p).includes(pivot))) {
+      out = out.concat(pivot);
+    }
 
     const invite = this._inviteFor(plan, ctx, 'Decline');
     // Avoid stacking pivot + invite when pivot already asks a question.
     if (invite && pivot && /\?/.test(pivot)) {
       /* pivot carries the invite */
-    } else if (invite && !this._alreadyEndsWithInvite(out)) {
+    } else if (invite && !this._alreadyEndsWithInvite(out) && !out.some((p) => String(p).trim() === String(invite).trim())) {
       out = out.concat(invite);
     }
     return out.join('\n\n');
@@ -1222,6 +1283,13 @@ const LocalProvider = {
       (blocks.find((b) => b.type === 'Evidence')?.data?.facts) || [],
     );
     const primary = ctx?.entities?.primaryEntity;
+
+    // V4.5 Phase 2 — contextual invite from task/topic before generic forks.
+    const contextual = pickContextualInvite(ctx, move);
+    if (contextual) {
+      return this._pickVariant(ctx?.memory, `v45-invite-${move}-${contextual.slice(0, 24)}`, [contextual]);
+    }
+
     const modeId = resolveAudienceMode(ctx);
     const audienceInvite = pickAudienceInvite(modeId, move, ctx);
     if (audienceInvite && modeId !== 'default') {
@@ -1424,6 +1492,14 @@ const LocalProvider = {
       const kinds = facts.map((f) => (f.docId ? getDoc(f.docId)?.kind : null)).filter(Boolean);
       const mode = (kinds.includes('project-arch') && !kinds.includes('project')) ? 'architecture'
         : (kinds.includes('project-stack') && !kinds.includes('project')) ? 'stack' : 'full';
+
+      // V4.5 Mod 4 — brochure cards only for explicit walkthrough / arch / stack asks
+      if (!this._allowsProjectBrochure(ctx, mode)) {
+        const fragment = this._spokenProjectSummary(proj, mode);
+        const sourcesForBlock = facts.filter((f) => f.docId).map((f) => this._factToSource(f)).filter(Boolean);
+        return { fragment, sourcesForBlock };
+      }
+
       const fragment = this._projectCardMarkdown(proj, mode, ctx?.visitorProfile, ctx?.memory);
       const sourcesForBlock = facts.filter((f) => f.docId).map((f) => this._factToSource(f)).filter(Boolean);
       return { fragment, sourcesForBlock, kindOverride: 'project-card', payloadOverride: { project: proj } };
@@ -1438,6 +1514,52 @@ const LocalProvider = {
       .map((f) => this._factToSource(f))
       .filter(Boolean);
     return { fragment, sourcesForBlock, inline: style === 'inline' };
+  },
+
+  /**
+   * V4.5 Mod 4 — when chat may emit ## / emoji / Problem–Solution brochure.
+   */
+  _allowsProjectBrochure(ctx, cardMode = 'full') {
+    const q = String(ctx?.questionFrame?.rawQuery || '');
+    const cMode = ctx?.questionFrame?.conversationMode;
+    if (cMode) return false;
+    if (isBoundFollowUpQuery(q)) return false;
+    if (/\b(60.?seconds?|tl;?dr|briefly|three talking points|plain english|elevator)\b/i.test(q)) return false;
+    if (/\b(criticiz|failure mode|scale .{0,20}qps|complexity|on-?call|regret|mistake|overrated|thin wrapper|bad choice|over-?engineered)\b/i.test(q)) {
+      return false;
+    }
+    const qType = ctx?.questionFrame?.questionType;
+    if (qType === 'ArchitectureExplanation' || qType === 'ProjectExplanation') return true;
+    if (cardMode === 'architecture' || cardMode === 'stack') {
+      return /\b(architect|stack|technolog|how.*(built|work)|built)\b/i.test(q);
+    }
+    return /\b(walk (me )?through|tell me about|show me|what is|explain|open|demo|describe)\b/i.test(q);
+  },
+
+  /** Spoken project summary — no marketing markdown sections. */
+  _spokenProjectSummary(proj, cardMode = 'full') {
+    if (cardMode === 'stack') {
+      return [
+        `**${proj.name}** stack: ${(proj.stack || []).map((s) => `\`${s}\``).join(' · ')}.`,
+        proj.decisions?.[0] || 'Chosen for production correctness and velocity.',
+      ].join('\n\n');
+    }
+    if (cardMode === 'architecture') {
+      return [
+        `**${proj.name}** is built so the backend owns orchestration and AI stays a reasoning layer over real data.`,
+        (proj.decisions || []).slice(0, 2).map((d, i) => `${i + 1}. ${d}`).join('\n'),
+        `Live: ${proj.live}${proj.repo ? ` · ${proj.repo}` : ''}`,
+      ].filter(Boolean).join('\n\n');
+    }
+    const solutionBeat = String(proj.solution || '')
+      .split(/(?<=\.)\s+/)
+      .slice(0, 2)
+      .join(' ');
+    return [
+      `**${proj.name}** — ${proj.tagline}`,
+      solutionBeat || proj.problem,
+      `Live: ${proj.live}${proj.repo ? ` · Repo: ${proj.repo}` : ''}`,
+    ].filter(Boolean).join('\n\n');
   },
 
   /** Every fact resolves (via its own `docId`) to a doc about the same
@@ -1501,18 +1623,27 @@ const LocalProvider = {
     const rows = dimensions.map((d) => `| ${d.label} | ${stripPrefix(d.values[0], a)} | ${stripPrefix(d.values[1], b)} |`).join('\n');
 
     const entry = TECH_TAKES.find((t) => t.techs.length === entities.length && t.techs.every((x) => entities.includes(x)));
-    // Presentation-only restoration: `_techComparisonResponse` always
-    // showed which real shipped project each technology actually shows up
-    // in, directly underneath the "My take" line, not just as citation
-    // chips. Same unchanged `_renderTechEvidence` helper, same evidence —
-    // only the table/verdict/evidence-line assembly is Stage 8's.
     const evidenceLines = entry ? this._renderTechEvidence(entry) : '';
+
+    // V4.5 Phase 2 — spoken reasoning first; table is detail, not the lead.
+    const spokenLead = verdict
+      || `I'd still contrast ${a} and ${b} from what I actually shipped — not from brand preference.`;
+    const firstDim = dimensions[0];
+    const beat = firstDim
+      ? `The interesting split is usually ${firstDim.label}: not which logo wins, but which constraints you're optimizing for.`
+      : `The interesting split is which constraints you're optimizing for.`;
+
     const fragment = [
+      spokenLead,
+      ``,
+      beat,
+      ``,
+      `If you want the full side-by-side, here are the dimensions:`,
+      ``,
       `| Dimension | ${a} | ${b} |`,
       `|---|---|---|`,
       rows,
-      verdict ? `\n**My take:** ${verdict}` : '',
-      evidenceLines ? `\n**Where this shows up:**\n${evidenceLines}` : '',
+      evidenceLines ? `\nWhere this shows up:\n${evidenceLines}` : '',
     ].filter(Boolean).join('\n');
 
     const sourcesForBlock = entry ? this._techEvidenceSources(entry) : [];

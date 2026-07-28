@@ -256,6 +256,16 @@ export function buildResponsePlan(questionFrame, entities, evidence, confidence)
     ]);
   }
 
+  // 3. Conversational intent gate (V4.5 Mod 1) — soft/opinion/challenge/probe
+  // modes must not fall into entity gap/affirmative or confidence-low decline.
+  // Reasoning synthesis owns the spoken answer for these modes.
+  if (questionFrame?.conversationMode) {
+    return finish([
+      directAnswer('', 'neutral'),
+      followupHintBlock(questionFrame, entities),
+    ]);
+  }
+
   // 4. No evidence at all (Stage 6's own honest-decline case).
   if (confidence?.tier === 'low') {
     return finish([
@@ -288,20 +298,27 @@ export function buildResponsePlan(questionFrame, entities, evidence, confidence)
   }
 
   // 7. A single dominant entity — ownership decides polarity/block choice.
+  // V4.5 Mod 3: gap/unknown → GapDisclosure once (no duplicate DirectAnswer).
   if (primary) {
     if (primary.type === 'tech' && (primary.ownership === 'gap' || primary.ownership === 'unknown')) {
       const note = gapNotes[0] || `There's no record of ${primary.canonical} in Sudhanshu's documented skill set.`;
       return finish([
-        directAnswer(note, 'negative'),
         gapDisclosureBlock(gapNotes.length ? gapNotes : [note]),
         followupHintBlock(questionFrame, entities),
       ]);
     }
     const label = primary.type === 'project' ? (primary.surfaceForm || primary.canonical) : primary.canonical;
-    const text = primary.type === 'project'
-      ? `Yes — ${label} is one of Sudhanshu's shipped projects.`
-      : `Yes — ${label} is part of Sudhanshu's shipped stack.`;
-    const blocks = [directAnswer(text, 'affirmative')];
+    // V4.5 Mod 5 — "Yes — shipped…" only for ownership yes/no checks
+    const ownershipYesNo = questionFrame?.questionType === 'SkillVerification'
+      || /^(do you|does he|are you|is he|have you|has he|can you|can he)\b/i.test(String(questionFrame?.rawQuery || '').trim());
+    const text = ownershipYesNo
+      ? (primary.type === 'project'
+        ? `Yes — ${label} is one of Sudhanshu's shipped projects.`
+        : `Yes — ${label} is part of Sudhanshu's shipped stack.`)
+      : (primary.type === 'project'
+        ? `${label} is one of the shipped projects.`
+        : `${label} shows up in the shipped stack.`);
+    const blocks = [directAnswer(text, ownershipYesNo ? 'affirmative' : 'neutral')];
     if (primaryFacts.length) blocks.push(evidenceBlock(primaryFacts));
     blocks.push(followupHintBlock(questionFrame, entities));
     return finish(blocks);
@@ -317,7 +334,6 @@ export function buildResponsePlan(questionFrame, entities, evidence, confidence)
   }
   if (gapNotes.length) {
     return finish([
-      directAnswer(gapNotes[0], 'negative'),
       gapDisclosureBlock(gapNotes),
       followupHintBlock(questionFrame, entities),
     ]);

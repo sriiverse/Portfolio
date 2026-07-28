@@ -53,6 +53,9 @@ const COMMON_CAPITALIZED_WORDS = new Set([
   'can', 'could', 'would', 'should', 'will',
   'tell', 'show', 'explain', 'describe', 'compare', 'give', 'walk',
   'sudhanshu', 'sriiverse',
+  // V4.5 Mod 1 — verbs / discourse tokens mistaken for unknown tech
+  'defend', 'concede', 'criticize', 'criticise', 'convince', 'rebuild',
+  'ai', 'api', 'mvp', 'rag', 'llm', 'llms', 'ux', 'ui', 'cto', 'phd',
 ]);
 
 function normalize(text) {

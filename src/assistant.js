@@ -49,7 +49,7 @@ import { decideTool, runTool, runProactiveTool, setKnowledgeRef } from './assist
 import { getProvider } from './assistant/providers.js';
 import { looksLikeJobDescription } from './assistant/jdmatch.js';
 import { interview } from './assistant/interview.js';
-import { buildQuestionFrame } from './assistant/conversation.js';
+import { buildQuestionFrame, isBoundFollowUpQuery } from './assistant/conversation.js';
 import { resolveEntities, assessConfidence } from './assistant/entities.js';
 import { buildResponsePlan } from './assistant/planning.js';
 import {
@@ -200,8 +200,9 @@ function resolveContext(query, intent) {
     if (needsRef) focusProject = focusProject || awareness.currentProject;
   }
 
-  // Pronoun resolution: rewrite query with project name for retrieval
-  const needsRef = /\b(it|that|this|its|second|third|first|one|both|other|next)\b/i.test(query);
+  // Pronoun / follow-up resolution: rewrite query with project name for retrieval
+  const needsRef = /\b(it|that|this|its|second|third|first|one|both|other|next)\b/i.test(query)
+    || isBoundFollowUpQuery(query);
   let enrichedQuery = query;
   if (needsRef && focusProject) {
     const proj = knowledge.getProject(focusProject);

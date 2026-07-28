@@ -8,8 +8,11 @@ import {
   fillWelcome,
   getWelcomeTemplates,
   buildProjectAudienceCallout,
+  pickContextualInvite,
+  formatSpokenComparison,
+  inferSessionTopic,
 } from '../src/assistant/adaptive.js';
-import { DIGITAL_BRAIN, WELCOME_VARIANTS, SELF_MODEL } from '../src/assistant/persona.js';
+import { DIGITAL_BRAIN, WELCOME_VARIANTS, SELF_MODEL, TECH_TAKES } from '../src/assistant/persona.js';
 import { buildQuestionFrame } from '../src/assistant/conversation.js';
 import { resolveEntities, assessConfidence } from '../src/assistant/entities.js';
 import { buildEvidenceSet } from '../src/assistant/knowledge.js';
@@ -67,7 +70,39 @@ test('adaptDraft attaches audience mode metadata without lens labels', () => {
   assert(out.payload._audienceMode === 'engineer', 'mode');
   assert(out.payload._digitalBrain === DIGITAL_BRAIN.title, 'brain meta');
   assert(!/Engineering lens|Hiring lens|Founder lens|Learning lens/i.test(out.text), 'no lens labels');
-  assert(/Want the trade-offs|Should I go deeper/i.test(out.text), 'mode invite');
+  assert(/\?\s*$/.test(out.text.trim()), 'ends with invite');
+});
+
+test('pickContextualInvite is topic-aware for Flask', () => {
+  const invite = pickContextualInvite({
+    payload: { _portfolioIntelligence: 'why_flask' },
+    query: 'Why Flask?',
+  }, 'Answer');
+  assert(/FastAPI|architecture/i.test(invite), `invite=${invite}`);
+});
+
+test('formatSpokenComparison leads with speech not a table', () => {
+  const entry = TECH_TAKES.find((t) => t.techs.includes('Flask') && t.techs.includes('FastAPI'));
+  assert(entry, 'flask/fastapi take');
+  const spoken = formatSpokenComparison(entry, { includeTable: true });
+  const firstLine = spoken.trim().split('\n')[0];
+  assert(!firstLine.startsWith('|'), `opened with: ${firstLine}`);
+  assert(/Flask|FastAPI/i.test(spoken), 'names present');
+  assert(/Dimension/i.test(spoken), 'table still available later');
+});
+
+test('inferSessionTopic reads prior turns in-session', () => {
+  const topic = inferSessionTopic({
+    memory: {
+      recentTurns: () => [
+        { role: 'user', text: 'Tell me about QueryForgeAI' },
+        { role: 'assistant', text: 'QueryForgeAI optimizes SQL…' },
+      ],
+      turns: [],
+    },
+    query: 'Why Flask?',
+  });
+  assert(topic?.id === 'queryforge', `topic=${topic?.id}`);
 });
 
 test('project callouts differ by mode', () => {

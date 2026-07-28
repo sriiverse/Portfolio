@@ -142,6 +142,9 @@ class Memory {
     // and a small repetition-avoidance ledger for providers.js's phrase variants.
     this.activeTopic = null;
     this.usedPhraseKeys = new Set();
+    // V4.5 Mod 2 — bound follow-up state (session only)
+    this.activeMode = null;
+    this.lastCommitment = null; // { projectId, name, task }
     this._load();
   }
 
@@ -155,6 +158,8 @@ class Memory {
       this.summary = data.summary || '';
       this.lastProject = data.lastProject || null;
       this.activeTopic = data.activeTopic || null;
+      this.activeMode = data.activeMode || null;
+      this.lastCommitment = data.lastCommitment || null;
       this.usedPhraseKeys = new Set(data.usedPhraseKeys || []);
       if (data.profile) this.profile.fromJSON(data.profile);
     } catch (e) { logWarn('memory', 'Ignoring corrupt sessionStorage data.', e); }
@@ -167,6 +172,8 @@ class Memory {
         summary: this.summary,
         lastProject: this.lastProject,
         activeTopic: this.activeTopic,
+        activeMode: this.activeMode,
+        lastCommitment: this.lastCommitment,
         usedPhraseKeys: [...this.usedPhraseKeys],
         profile: this.profile.toJSON(),
       }));
@@ -202,6 +209,17 @@ class Memory {
   /** Record which topic the conversation is currently about (Sprint 3). */
   setActiveTopic(topic) {
     if (topic) this.activeTopic = topic;
+  }
+
+  /**
+   * V4.5 Mod 2 — bind follow-ups to the last commitment (project + mode).
+   * Session-only; does not invent facts.
+   */
+  bindConversationState({ projectId, mode, commitment } = {}) {
+    if (projectId) this.lastProject = projectId;
+    if (mode) this.activeMode = mode;
+    if (commitment) this.lastCommitment = commitment;
+    this._save();
   }
 
   /** Has this phrase-variant key already been shown this session? */
@@ -241,6 +259,8 @@ class Memory {
     this.summary = '';
     this.lastProject = null;
     this.activeTopic = null;
+    this.activeMode = null;
+    this.lastCommitment = null;
     this.usedPhraseKeys = new Set();
     this.profile = new VisitorProfile();
     this._save();

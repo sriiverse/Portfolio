@@ -123,6 +123,75 @@ const EVIDENCE_REQUEST_RE = /\b(prove (it|that|you|he)|can (you|he) prove|show m
 const CONVERSATION_RE = /^(ok(ay)?|cool|nice|great|thanks( you)?|got it|makes sense|interesting|sounds good)[.!]?$/i;
 const CHALLENGE_RE = /\b(even real|just canned|actually (work|know|good)|really (an ai|real|work)|just a (bot|script)|just scripted|bad at|not good at|weakness)\b/i;
 
+/**
+ * V4.5 Mod 1 — Conversational Intent Gate.
+ * Modes that must win over entity-confirm / project-card / hire-pitch paths.
+ * Returns null when the normal questionType/reasoning classifiers should own the turn.
+ */
+const EMPLOYER_RE = /\b(google|meta|amazon|apple|netflix|microsoft|faang)\b/i;
+const EMPLOYMENT_CLAIM_RE = /\b(experience at|worked at|job at|employed at|intern(ship)? at|tenure at|your experience at|tell me about your experience at)\b/i;
+
+export function classifyConversationMode(query) {
+  const t = String(query || '').toLowerCase().trim();
+  if (!t) return null;
+
+  // preference_gap — personal facts / employers not evidenced in the portfolio
+  if (/\b(relocat\w*|salary|compensation|pay expectation|phd research|aws certification|your aws cert)\b/i.test(t)) {
+    return 'preference_gap';
+  }
+  if (EMPLOYMENT_CLAIM_RE.test(t) && EMPLOYER_RE.test(t) && !/\b(interview|impress|which project|project for|faang-style)\b/i.test(t)) {
+    return 'preference_gap';
+  }
+
+  // challenge — criticism / defend-concede / thin-wrapper attacks
+  if (/\b(criticiz\w*|thin wrapper|bad choice|defend or concede|over-?engineered|convince me otherwise|aren'?t you just|just wrapping)\b/i.test(t)) {
+    return 'challenge';
+  }
+
+  // self — soft skills / regret / mistakes (not "biggest weakness" — Critique owns that)
+  if (/\b(leadership|disagreement on a team|code review feedback|decision you regret|mistakes did you make|how do(?:es)? (you|he) handle disagreement)\b/i.test(t)) {
+    return 'self';
+  }
+
+  // ops_story — production / on-call narratives
+  if (/\b(on-?call|failed in production|what failed|production (incident|outage|failure))\b/i.test(t)) {
+    return 'ops_story';
+  }
+
+  // probe — engineering depth probes (failure modes, scale, complexity, hardest part)
+  if (/\b(failure modes?|scale .{0,24}(\d+\s*k?\s*)?(qps|rps|req)|time and space complexity|hardest part|what was the hardest)\b/i.test(t)) {
+    return 'probe';
+  }
+
+  // opinion — takes not reducible to stack inventory
+  if (/\b(what do you think of|what'?s your (take|opinion) on|is \w[\w+.#-]* overrated|is typescript worth|thoughts on)\b/i.test(t)
+    || /\boverrated\b/i.test(t)
+    || /\bworth it\b/i.test(t) && /\b(typescript|typeScript|ts)\b/i.test(t)) {
+    return 'opinion';
+  }
+
+  // brief — timed / scoped asks must not dump chronology or brochure
+  if (/\b(60.?seconds?|elevator pitch|in (one|1) minute|three talking points|tl;?dr|plain english)\b/i.test(t)) {
+    return 'brief';
+  }
+
+  return null;
+}
+
+/**
+ * V4.5 Mod 2 — follow-up shapes that must inherit the prior commitment.
+ */
+export function isBoundFollowUpQuery(query) {
+  const t = String(query || '').trim().toLowerCase();
+  if (!t) return false;
+  if (/\bwhy that one\b|\bwhy this one\b|\bwhy that\b|\bwhy this\??\s*$/i.test(t)) return true;
+  if (/^(and )?why\??$/i.test(t)) return true;
+  if (/\bso why did\b|\bwhy (did|does|would).{0,40}\bkeep\b/i.test(t)) return true;
+  if (/\bwhat was the hardest\b|\bhardest part\b/i.test(t)) return true;
+  if (/\bwhy flask\b|\bkeep flask\b|\bkept flask\b/i.test(t) && !/queryforge|reporadar|placement/i.test(t)) return true;
+  return false;
+}
+
 // --- Subject resolution (docs/REASONING_ENGINE_SPEC.md Section 3.1) -------
 // Resolves WHO the question is fundamentally about, once, before any
 // questionType check below runs — the fix for Cluster A ("second-person-
@@ -441,5 +510,7 @@ export function buildQuestionFrame(query, ctx = {}) {
     classified.confidence = 'medium';
   }
 
-  return { ...legacy, ...classified, rawQuery };
+  const conversationMode = classifyConversationMode(rawQuery);
+
+  return { ...legacy, ...classified, rawQuery, conversationMode };
 }
