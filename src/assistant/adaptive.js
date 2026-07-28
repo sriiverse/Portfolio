@@ -83,8 +83,8 @@ export function getWelcomeTemplates() {
 
 /**
  * Adapt a drafted spoken answer for audience emphasis.
- * Preserves factual content; may append a short lens line or swap invites.
- * Greeting / Clarify left unchanged (welcome is authored separately).
+ * Mode-aware invites only — no visitor-facing "Hiring lens" / "Engineering lens"
+ * stickers (V4.5 Phase 1). Greeting / Clarify left unchanged.
  */
 export function adaptSpokenAnswer(text, modeId, ctx = {}) {
   const mode = getAudienceMode(modeId);
@@ -96,27 +96,14 @@ export function adaptSpokenAnswer(text, modeId, ctx = {}) {
 
   if (modeId === 'default' || !mode.lens) return out;
 
-  // Avoid stacking lenses / repeating.
-  if (new RegExp(`${escapeRe(mode.lens)}:`, 'i').test(out)) return out;
-
-  // Don't attach lenses to pure honesty declines that are already short.
-  if (move === 'Decline' && out.length < 180) return out;
-
-  const lensLine = buildLensLine(modeId, ctx);
-  if (!lensLine) return out;
-
-  // Prefer replacing a trailing invite with mode-aware invite + keep body.
+  // Prefer replacing a trailing invite with a mode-aware invite (no meta labels).
   const invite = pickAudienceInvite(modeId, move, ctx);
   if (invite && endsWithQuestion(out)) {
     out = stripTrailingInvite(out);
-    return `${out}\n\n${lensLine}\n\n${invite}`.trim();
+    return `${out}\n\n${invite}`.trim();
   }
 
-  if (endsWithQuestion(out)) {
-    return `${out}\n\n${lensLine}`.trim();
-  }
-
-  return `${out}\n\n${lensLine}`.trim();
+  return out;
 }
 
 /**
@@ -251,26 +238,6 @@ export function buildProjectAudienceCallout(proj, modeId, relevanceText) {
   return '';
 }
 
-function buildLensLine(modeId, ctx) {
-  const mode = getAudienceMode(modeId);
-  if (!mode.lens) return null;
-  const focus = ctx?.visitorProfile?.focusArea;
-  const focusBit = focus ? ` (focus: ${focus})` : '';
-
-  switch (modeId) {
-    case 'recruiter':
-      return `*${mode.lens}${focusBit}:* prioritize live demos, stack fit, and ownership — architecture stays available on request.`;
-    case 'engineer':
-      return `*${mode.lens}${focusBit}:* prioritize trade-offs, constraints, and alternatives over pitch language.`;
-    case 'founder':
-      return `*${mode.lens}${focusBit}:* prioritize ship speed, end-to-end ownership, and product leverage.`;
-    case 'student':
-      return `*${mode.lens}${focusBit}:* prioritize clear definitions and step-by-step rationale — ask for a slower walkthrough anytime.`;
-    default:
-      return null;
-  }
-}
-
 function endsWithQuestion(text) {
   return /\?\s*$/.test(String(text || '').trim());
 }
@@ -283,8 +250,4 @@ function stripTrailingInvite(text) {
     return parts.slice(0, -1).join('\n\n').trim();
   }
   return text;
-}
-
-function escapeRe(s) {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

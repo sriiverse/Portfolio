@@ -425,7 +425,7 @@ function opRank(ctx, { weights, keep = 1, conclusionLead, whyLead, evidenceLead 
 
 function describeOthers(rest) {
   if (!rest.length) return '';
-  return rest.map((p) => nm(p)).join(', ') + ' remain strong alternatives depending on the hiring lens.';
+  return `${rest.map((p) => nm(p)).join(' and ')} are still worth a look depending on the role.`;
 }
 
 /** Evaluate competency from graph used_in / identity. */
@@ -436,28 +436,25 @@ function opEvaluate(ctx, { conclusion, reasoning, evidence }) {
 /** Critique from identity strengths + growthAreas. */
 function opCritique(ctx, { mode }) {
   const strengths = getIdentityClaimsByFacet('strengths', ctx.identity);
-  const growth = getIdentityClaimsByFacet('growthAreas', ctx.identity);
-  const philosophy = getIdentityClaimsByFacet('philosophy', ctx.identity);
 
   if (mode === 'learn_next') {
-    const thin = growth.filter((c) => /pinning|thin|async|observability|not present/i.test(c.statement));
     return speak(
       ctx.strategy,
-      `The highest-leverage next signals (inferred from what's present vs absent — not a plan he wrote) are sharper data-store pinning, more async/API-first depth beyond later FastAPI work, and clearer observability/ops storytelling.`,
-      `That would make the already-strong backend + AI story even easier to hire against.`,
-      `I won't invent a curriculum. Name a stack gap (Kubernetes, Kafka, etc.) and I'll tell you whether it appears here.\n\n${thin.map((c) => `- ${c.statement}`).join('\n') || growth.map((c) => `- ${c.statement}`).join('\n')}`,
+      `If I keep sharpening the public signal, I'd start with clearer data-store pinning, more async/API-first depth, and stronger observability storytelling.`,
+      `That doesn't invent a curriculum — it's inferred from what's present vs thin in the portfolio.`,
+      `I won't invent a learning plan I never wrote down. Name a stack gap (Kubernetes, Kafka, etc.) and I'll tell you honestly whether it appears here.`,
     );
   }
 
-  // weakest_area
-  const strengthLines = strengths.map((c) => c.statement).slice(0, 3);
-  const growthLines = growth.map((c) => c.statement);
-  const phil = philosophy.find((c) => /reasoning layer/i.test(c.statement));
+  // weakest_area — short-first; no identity-export dump
+  const strengthHint = strengths[0]?.statement
+    ? strengths[0].statement.replace(/^Documented role focus:\s*/i, '')
+    : 'shipping live backend + AI systems';
   return speak(
     ctx.strategy,
     `Relative to what's evidenced, the softest public signal is deep ops / cloud-native breadth — not core product engineering.`,
-    `Strengths first: ${strengthLines.join(' ')} ${phil ? phil.statement : ''}`.trim(),
-    `Limitations I can defend from the portfolio (not invented personality flaws):\n${growthLines.map((s) => `- ${s}`).join('\n')}\n\nAsk about a specific gap if you're hiring for it — I'll say honestly whether it appears here.`,
+    `The strong signal is still ${strengthHint}. I wouldn't pretend Kubernetes-scale ops is what this portfolio proves.`,
+    `Ask about a specific gap if you're hiring for it — I'll say whether it appears here.`,
   );
 }
 
@@ -474,32 +471,32 @@ function opInfer(ctx, { task }) {
   if (task === 'startup_fit') {
     return speak(
       ctx.strategy,
-      `Yes — he'd fit a startup that needs someone to ship backend + applied AI end to end.`,
-      `Startups reward ownership and speed-to-live. ${live?.statement || 'Multiple production AI products are live.'} ${backend?.statement || ''} ${ai?.statement || ''}`.trim(),
-      `Less ideal as the *only* hire for pure mobile, deep ML research, or infra-only SRE — those aren't what this portfolio demonstrates.`,
+      `Yes — I'd fit a startup that needs someone to ship backend + applied AI end to end.`,
+      `Startups reward ownership and speed-to-live. ${live?.statement || 'I ship multiple production AI products with live URLs.'}`,
+      `I wouldn't pitch myself as the *only* hire for pure mobile, deep ML research, or infra-only SRE — that isn't what this portfolio shows.`,
     );
   }
   if (task === 'backend_team_fit') {
     return speak(
       ctx.strategy,
-      `Yes — a backend / platform team is a natural fit.`,
-      `The portfolio's center of gravity is Python services, REST APIs, and AI orchestration with the backend as correctness owner.`,
-      `Evidence: ${backend?.statement || 'Python backends across ships'}; title ${subject?.title || ''}; frontend present but secondary.`,
+      `Yes — a backend / platform team is a natural fit for me.`,
+      `My center of gravity is Python services, REST APIs, and AI orchestration with the backend owning correctness.`,
+      `Frontend is real and shipped, but secondary to ${subject?.title || 'the backend-leaning title'}.`,
     );
   }
   if (task === 'product_oriented') {
     return speak(
       ctx.strategy,
-      `He's product-capable, with engineering as the primary identity.`,
-      `${nm(pp)} especially shows product workflow thinking (resume → gaps → roadmap as a "Placement.OS"). Overall though, the portfolio reads engineer-who-ships-products more than product-manager-who-codes.`,
-      `Hire him for building the system; expect product judgment as a bonus, not the main signal.`,
+      `I'm product-capable, with engineering as the primary identity.`,
+      `${nm(pp)} especially shows product workflow thinking (resume → gaps → roadmap). Overall I read as an engineer who ships products — not a PM who codes.`,
+      `Hire me to build the system; treat product judgment as a bonus, not the main signal.`,
     );
   }
   if (task === 'best_role') {
     return speak(
       ctx.strategy,
-      `Best fit: Python backend / AI platform / full-stack product engineer roles where shipping matters.`,
-      `Especially strong for API design, LLM orchestration grounded in real data, and honest architecture.`,
+      `Best fit for me: Python backend / AI platform / full-stack product engineer roles where shipping matters.`,
+      `I'm especially strong on API design, LLM orchestration grounded in real data, and honest architecture.`,
       `Less ideal as a first hire for pure mobile, deep ML research, or infra-only SRE.`,
     );
   }
@@ -538,60 +535,64 @@ function opExplain(ctx, { task }) {
         .filter((t) => /postgres|mongo/i.test(t.label))
         .map((t) => `\`${t.label}\``);
       const pick = topByAttribute(ctx.profiles, 'databases') || qf;
-      const growth = getIdentityClaimsByFacet('growthAreas', ctx.identity)
-        .find((c) => /database/i.test(c.statement));
       return speak(
         ctx.strategy,
-        `Postgres is the default when relational integrity and schema-aware work matter — which is exactly ${nm(pick)}'s world.`,
-        `At the portfolio level he lists ${dataTechs.join(' and ') || 'PostgreSQL and MongoDB'} as the data layer.`,
-        growth?.statement
-          || `${nm(qf)} demonstrates SQL generation, plan awareness, and schema-grounded assistance even though per-project stack cards don't always pin a single DB vendor.`,
+        `I'd default to Postgres when relational integrity and schema-aware work matter — which is exactly ${nm(pick)}'s world.`,
+        `The interesting problem there is correctness against a real data model, not just storing documents.`,
+        `At the portfolio level I list ${dataTechs.join(' and ') || 'PostgreSQL and MongoDB'} as the data layer — I won't invent a single pinned vendor per project card when the cards are thinner.`,
       );
     }
 
-    const conclusion = task === 'why_flask'
-      ? `Flask is the right call on ${projectsUsing.map(nm).join(' and ') || 'the Flask-based ships'} — smaller surface, explicit request-lifecycle control for backend + AI orchestration.`
-      : task === 'why_fastapi'
-        ? `${nm(rr)} ships FastAPI for an API-first intelligence service with I/O-heavy GitHub ingestion.`
-        : `React is what the shipped UIs actually use — especially ${projectsUsing.map(nm).join(' and ')}.`;
+    // Storytelling openings — lived-in tech choices, no internal decision IDs
+    let conclusion;
+    if (task === 'why_flask') {
+      conclusion = `I chose Flask on ${projectsUsing.map(nm).join(' and ') || 'the Flask-based ships'} because I wanted a smaller surface and explicit control over the request lifecycle while wiring backend + AI together.`;
+    } else if (task === 'why_fastapi') {
+      conclusion = `I reached for FastAPI on ${nm(rr)} because the service is API-first with I/O-heavy GitHub ingestion — async mattered more than a minimal sync surface.`;
+    } else {
+      conclusion = `I built the UIs in React — especially on ${projectsUsing.map(nm).join(' and ') || 'the React ships'} — because that's the ecosystem I actually shipped in.`;
+    }
 
     const reasoning = pref?.statement
-      || (trade ? `${trade.dimension}: ${trade.chosenView}` : `${tech} is evidenced on shipped project stack cards and decision records.`)
-      || sample?.rawText;
+      || (trade
+        ? `The interesting trade-off was ${trade.dimension.toLowerCase()}: ${trade.chosenView}`
+        : (sample?.rawText || `I considered the alternatives, but ${tech} is what ended up on the shipped stack cards.`));
 
+    const altTechs = (sample?.alternatives || [])
+      .map((a) => a.tech)
+      .filter(Boolean);
     const evidence = [
-      projectsUsing.length ? `Projects with \`${tech}\`: ${projectsUsing.map(nm).join(', ')}.` : '',
-      decs.length ? `Decision records: ${decs.map((d) => d.id).join(', ')}.` : '',
-      sample?.alternatives?.length
-        ? `Alternatives (not claimed as rejected): ${sample.alternatives.map((a) => `${a.tech} [${a.status}]`).join(', ')}.`
+      projectsUsing.length ? `You'll see \`${tech}\` on ${projectsUsing.map(nm).join(' and ')}.` : '',
+      altTechs.length
+        ? `I can see why someone would choose ${altTechs.join(' or ')} instead — I just didn't on these ships.`
         : '',
     ].filter(Boolean).join(' ');
 
-    return speak(ctx.strategy, conclusion, reasoning, evidence);
+    return speak(ctx.strategy, conclusion, reasoning, evidence || `It's evidenced on the shipped stack — not a slide-deck preference.`);
   }
 
   if (task === 'arch_why') {
     const path = layers.map((l) => `**${l.label}** (${l.props.sub})`).join(' → ');
     const principles = getIdentityClaimsByFacet('designPrinciples', ctx.identity);
     return [
-      `The architecture is a deliberate five-layer split: ${path}.`,
-      principles.map((c) => c.statement).join(' ')
-        || 'Why: each layer has one job. Frontend talks over REST; backend owns correctness; AI reasons over real data.',
-      `Same topology across ${ctx.profiles.map(nm).join(', ')}.`,
+      `I designed the architecture as a deliberate five-layer split: ${path}.`,
+      principles[0]?.statement
+        || 'The problem I wanted to solve was clear ownership — frontend over REST, backend for correctness, AI reasoning over real data.',
+      `Same spine across ${ctx.profiles.map(nm).join(', ')}.`,
     ].join('\n\n');
   }
 
   if (task === 'arch_tradeoffs') {
     return [
-      `The main trade-off of the five-layer model is operational overhead: more moving parts than a monolith, in exchange for clear ownership — especially keeping AI from becoming a blind generator.`,
-      `If rebuilt tomorrow, the pressure points already implied by identity growth signals are deeper observability, tighter per-project data-store pinning, and more async/API-first patterns where I/O dominates (the direction ${nm(rr)} already took).`,
-      `I won't invent a rewrite plan he hasn't written down.`,
+      `The interesting trade-off of the five-layer model is operational overhead: more moving parts than a monolith, in exchange for clear ownership — especially keeping AI from becoming a blind generator.`,
+      `If I rebuilt this tomorrow, I'd probably push harder on observability, per-project data-store pinning, and async/API-first patterns where I/O dominates (the direction ${nm(rr)} already took).`,
+      `I won't invent a rewrite plan I never wrote down.`,
     ].join('\n\n');
   }
 
   if (task === 'arch_scale') {
     return [
-      `They scale along the seams the architecture already defines: horizontalize Python API workers, keep AI as a reasoning service over real inputs, keep the frontend a thin REST client.`,
+      `I'd scale along the seams the architecture already defines: horizontalize Python API workers, keep AI as a reasoning service over real inputs, keep the frontend a thin REST client.`,
       `Live deployments show production hosting, not laptop demos. Exact QPS/SLA numbers aren't published — I won't invent them.`,
     ].join('\n\n');
   }
@@ -624,8 +625,8 @@ function opSummarize(ctx, { task }) {
 
   if (task === 'about_sudhanshu') {
     return [
-      `${subject?.name || 'Sudhanshu'} is a ${subject?.title || 'software engineer'}. ${subject?.tagline || ''}`.trim(),
-      `He ships intelligent systems end to end: ${ctx.profiles.map(nm).join(', ')} — all live, sharing a five-layer architecture where AI reasons over real data.`,
+      `I'm ${subject?.name || 'Sudhanshu Sinha'} — a ${subject?.title || 'software engineer'}. ${subject?.tagline || ''}`.trim(),
+      `I ship intelligent systems end to end: ${ctx.profiles.map(nm).join(', ')} — all live, sharing a five-layer architecture where AI reasons over real data.`,
       prefs.find((c) => /backend-leaning|Python/i.test(c.statement))?.statement
         || 'Center of gravity: Python backend + applied AI, with enough frontend to finish the product.',
     ].join('\n\n');
@@ -636,7 +637,7 @@ function opSummarize(ctx, { task }) {
     const ai = philosophy.find((c) => /reasoning layer/i.test(c.statement));
     return speak(
       ctx.strategy,
-      `What makes this portfolio memorable is that it ships three live AI systems under one architectural philosophy — not a list of screenshots.`,
+      `What makes this portfolio memorable is that I ship three live AI systems under one architectural philosophy — not a list of screenshots.`,
       `${ai?.statement || ''} ${ship?.statement || ''}`.trim(),
       `You can click demos. That's the difference.`,
     );
@@ -645,36 +646,35 @@ function opSummarize(ctx, { task }) {
   if (task === 'tech_frequency') {
     const univ = patterns.filter((c) => /core stack constant|Shared stack pattern/i.test(c.statement));
     return [
-      `Most repeated across shipped projects:`,
+      `What shows up most across my shipped projects:`,
       univ.map((c) => `- ${c.statement}`).join('\n') || patterns.slice(0, 5).map((c) => `- ${c.statement}`).join('\n'),
-      `Portfolio-wide he also lists databases and deploy tools at the STACK/architecture layer even when a given project's public stack card is thinner.`,
+      `Portfolio-wide I also list databases and deploy tools at the STACK/architecture layer even when a given project's public stack card is thinner.`,
     ].join('\n\n');
   }
 
   if (task === 'design_philosophy') {
     const design = getIdentityClaimsByFacet('designPrinciples', ctx.identity);
-    const phil = philosophy.map((c) => c.statement).join(' ');
     return [
-      `Common design philosophy: **clear layer ownership, AI grounded in real inputs, ship the whole product.**`,
-      [...design.map((c) => c.statement), phil].filter(Boolean).join(' '),
+      `My design philosophy is simple: **clear layer ownership, AI grounded in real inputs, ship the whole product.**`,
+      design[0]?.statement || philosophy[0]?.statement || '',
       `Same spine across ${ctx.profiles.map(nm).join(', ')}.`,
-    ].join('\n\n');
+    ].filter(Boolean).join('\n\n');
   }
 
   if (task === 'engineer_type') {
     const lean = prefs.find((c) => /backend-leaning|full-stack/i.test(c.statement));
     return speak(
       ctx.strategy,
-      `He's a backend-leaning full-stack engineer with applied AI as a product skill — matching ${subject?.title || 'his documented title'}.`,
-      lean?.statement || 'Not a research scientist, not a pure frontend specialist.',
-      `Someone who builds Python services, wires AI into real workflows, and ships the UI when the product needs it.`,
+      `I'm a backend-leaning full-stack engineer with applied AI as a product skill — matching ${subject?.title || 'my documented title'}.`,
+      lean?.statement || "I'm not a research scientist, and I'm not a pure frontend specialist.",
+      `I build Python services, wire AI into real workflows, and ship the UI when the product needs it.`,
     );
   }
 
   if (task === 'strengths') {
     return [
-      `Strengths that are actually evidenced:`,
-      ...strengths.map((c) => `- ${c.statement}`),
+      `Strengths I can actually defend from the portfolio:`,
+      ...strengths.slice(0, 4).map((c) => `- ${c.statement}`),
     ].join('\n\n');
   }
 
@@ -687,8 +687,8 @@ function opJustify(ctx, { task }) {
     return opRank(ctx, {
       weights: TASK_OBJECTIVES.best_engineering,
       conclusionLead: (pick) => `I'd choose ${nm(pick)}.`,
-      whyLead: (pick) => `It demonstrates the strongest software engineering because it combines backend architecture, SQL optimization, AI reasoning grounded in a real schema, production deployment, and thoughtful system design — not just feature count.`,
-      evidenceLead: (pick, rest) => `Among the portfolio projects, it best showcases end-to-end engineering. ${rest.map(nm).join(' and ')} remain strong on split-stack and product workflow respectively.`,
+      whyLead: (pick) => `It shows the strongest software engineering in one place — backend architecture, SQL optimization, AI grounded in a real schema, and production deployment.`,
+      evidenceLead: (pick, rest) => `${rest.map(nm).join(' and ')} remain strong on split-stack and product workflow — but ${pick?.name} is the deepest systems story.`,
     });
   }
 
@@ -697,22 +697,20 @@ function opJustify(ctx, { task }) {
       .find((c) => /reasoning layer/i.test(c.statement));
     return speak(
       ctx.strategy,
-      `The strongest engineering decision is treating AI as a reasoning layer over real data — not a blind text generator.`,
+      `The strongest engineering decision I made is treating AI as a reasoning layer over real data — not a blind text generator.`,
       phil?.statement
-        || 'That choice shows up across schema-aware SQL work, resume-anchored advice, and layered repo intelligence.',
+        || 'That shows up in schema-aware SQL work, resume-anchored advice, and layered repo intelligence.',
       `It keeps products useful and keeps the architecture honest.`,
     );
   }
 
   if (task === 'why_hire') {
-    const ship = getIdentityClaimsByFacet('philosophy', ctx.identity)
-      .find((c) => /Ship working production|slideware/i.test(c.statement));
     const rr = ctx.byId('reporadar');
     const qf = ctx.byId('queryforge');
     return speak(
       ctx.strategy,
-      `Hire him because he ships real systems — three live AI products, not slideware.`,
-      `${ship?.statement || ''} He thinks in backend correctness and applied AI: Python services, REST APIs, and an architecture where the model reasons over real data instead of hallucinating product behavior.`.trim(),
+      `Hire me because I ship real systems — three live AI products, not slideware.`,
+      `I think in backend correctness and applied AI: Python services, REST APIs, and an architecture where the model reasons over real data instead of inventing product behavior.`,
       `Best proof: open ${nm(rr)} for the modern full-stack demo, then ${nm(qf)} if you care about data/AI rigor.`,
     );
   }
@@ -772,8 +770,8 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
     return opRecommend(opCtx, {
       weights: TASK_OBJECTIVES.faang_interview,
       conclusionLead: (pick) => `I'd put ${nm(pick)} in front of a FAANG-style interviewer.`,
-      whyLead: (pick) => `That kind of interview rewards depth of systems thinking, correctness under constraints, and clear trade-offs — not just a pretty demo. ${nm(pick)} combines backend architecture, schema-aware SQL/AI reasoning, and production deployment; it's the strongest "software engineering" story in the set.`,
-      evidenceLead: () => `${nm(rr)} is the better live walkthrough if they want open-source code on the table (${rr?.project?.repo || 'public repo'}). ${nm(pp)} is secondary unless the role is product/platform for career tooling.`,
+      whyLead: (pick) => `That interview rewards systems thinking and trade-offs — not just a pretty demo. ${nm(pick)} is where I pushed backend architecture, schema-aware SQL/AI reasoning, and production deployment hardest.`,
+      evidenceLead: () => `${nm(rr)} is the better live walkthrough if they want open-source code on the table. ${nm(pp)} is secondary unless the role is product/platform for career tooling.`,
     });
   }
 
@@ -783,18 +781,18 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
     const pp = byId('placementpro');
     const leads = {
       recruiter_impress: {
-        conclusionLead: (pick) => `For a recruiter, lead with ${nm(pick)}.`,
-        whyLead: (pick) => `Recruiters respond to a live URL, a modern stack story, and something they can click in under a minute. ${nm(pick)} ships publicly${pick?.project?.repo ? ', is open-sourced,' : ''} and presents a clean full-stack split.`,
+        conclusionLead: (pick) => `For a recruiter, I'd lead with ${nm(pick)}.`,
+        whyLead: (pick) => `Recruiters respond to a live URL and a story they can click in under a minute. ${nm(pick)} ships publicly${pick?.project?.repo ? ', is open-sourced,' : ''} and shows a clean full-stack split.`,
         evidenceLead: () => `Keep ${nm(qf)} ready if they ask about data/AI rigor, and ${nm(pp)} if the role leans product.`,
       },
       interview_first: {
         conclusionLead: (pick) => `I'd open with ${nm(pick)}.`,
-        whyLead: (pick) => `You can demo it live, walk the API/UI split, and go as deep as the interviewer wants${pick?.project?.repo ? ' — including the public repo' : ''}.`,
+        whyLead: (pick) => `You can demo it live, walk the API/UI split, and go as deep as you want${pick?.project?.repo ? ' — including the public repo' : ''}.`,
         evidenceLead: () => `Then use ${nm(qf)} for data/AI correctness or ${nm(pp)} for product/platform roles.`,
       },
       best_work: {
         conclusionLead: (pick) => `I'd lead with ${nm(pick)}.`,
-        whyLead: () => `It's the clearest full-system story: live product, modern split stack, and inspectable code where available.`,
+        whyLead: () => `It's the clearest full-system story I shipped: live product, modern split stack, and inspectable code where available.`,
         evidenceLead: (pick, rest) => `${rest.map(nm).join(' and ')} remain strong domain/product plays — but ${pick?.name} is the strongest "here's the work" signal.`,
       },
     };
@@ -805,9 +803,9 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
     return opRank(opCtx, {
       weights: TASK_OBJECTIVES.keep_two,
       keep: 2,
-      conclusionLead: (top) => `If he could only keep two, I'd keep ${nm(top[0])} and ${nm(top[1])}.`,
-      whyLead: () => `Together they cover the deepest engineering signal (schema-aware systems + correctness) and the strongest full-stack/open-source signal (inspectable live product). That pair maximizes what a technical hiring loop can probe.`,
-      evidenceLead: (top, drop) => `I'd drop ${nm(drop[0])} last — it's a real shipped product with strong product UX, but relative to the other two it adds less unique engineering depth for a constrained portfolio.`,
+      conclusionLead: (top) => `If I could only keep two, I'd keep ${nm(top[0])} and ${nm(top[1])}.`,
+      whyLead: () => `Together they cover the deepest engineering signal and the strongest full-stack/open-source signal — the pair a technical hiring loop can actually probe.`,
+      evidenceLead: (top, drop) => `I'd drop ${nm(drop[0])} last — it's a real shipped product, but it adds less unique engineering depth in a constrained portfolio.`,
     });
   }
 
@@ -854,23 +852,20 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   // --- Evaluate ---
   if (task === 'eval_rest_apis') {
     const withRest = profiles.filter((p) => (p.project.stack || []).some((s) => /rest/i.test(s)));
-    const talks = getEdges(graph, { type: 'talks_to' });
     return opEvaluate(opCtx, {
-      conclusion: `Yes — he can design REST APIs.`,
-      reasoning: `Confidence is high because REST APIs appear across the shipped systems, not as a single bullet on a resume. The backend layer owns request orchestration and validation in the five-layer architecture; frontends talk to backends exclusively over REST${talks.length ? ' (graph talks_to edge)' : ''}.`,
-      evidence: `Evidence: ${withRest.map(nm).join(', ') || 'all three projects'} list REST APIs in their stacks, with Flask/FastAPI services as the API owners.`,
+      conclusion: `Yes — I can design REST APIs.`,
+      reasoning: `Confidence is high because REST isn't a single resume bullet — it's how my frontends talk to backends across the shipped systems.`,
+      evidence: `You'll see REST APIs on ${withRest.map(nm).join(', ') || 'all three projects'}, with Flask/FastAPI services owning the contracts.`,
     });
   }
 
   if (task === 'backend_vs_frontend') {
     const back = getNodesByType(graph, 'Technology').filter((t) => t.props.group === 'back').map((t) => t.label);
     const front = getNodesByType(graph, 'Technology').filter((t) => t.props.group === 'front').map((t) => t.label);
-    const lean = getIdentityClaimsByFacet('architecturalPrefs', identity)
-      .find((c) => /backend-leaning|Python/i.test(c.statement));
     return opEvaluate(opCtx, {
-      conclusion: `He's stronger on the backend side.`,
-      reasoning: `All three production systems are built around Python services and APIs, with AI orchestration living in that backend layer. Frontend is real and shipped, but the center of gravity matches his title: ${identity.subject?.title || ''}. ${lean?.statement || ''}`.trim(),
-      evidence: `Backend signals: ${back.map((n) => `\`${n}\``).join(', ')}. Frontend signals: ${front.map((n) => `\`${n}\``).join(', ')}. I'd call him a backend-leaning full-stack engineer — not frontend-only.`,
+      conclusion: `I'm stronger on the backend side.`,
+      reasoning: `All three production systems are built around Python services and APIs, with AI orchestration living in that backend layer. Frontend is real and shipped — but the center of gravity matches my title.`,
+      evidence: `Backend: ${back.map((n) => `\`${n}\``).join(', ')}. Frontend: ${front.map((n) => `\`${n}\``).join(', ')}. I'd call myself backend-leaning full-stack — not frontend-only.`,
     });
   }
 
@@ -880,13 +875,13 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
     if (!docker) {
       return opEvaluate(opCtx, {
         conclusion: `I won't invent Docker seniority that isn't evidenced.`,
-        reasoning: `What I can say is the deployment layer in his architecture includes container-friendly production hosting.`,
+        reasoning: `What I can say is the deployment layer includes container-friendly production hosting.`,
         evidence: deploy?.props.sub || 'Deploy tooling appears at the portfolio architecture level.',
       });
     }
     const used = getEdges(graph, { from: docker.id, type: 'used_in' });
     return opEvaluate(opCtx, {
-      conclusion: `Yes — Docker is part of how he ships.`,
+      conclusion: `Yes — Docker is part of how I ship.`,
       reasoning: `It's listed in the portfolio STACK${used.length ? ' and linked into shipped projects' : ' (portfolio-level; thinner per-project pins)'} and sits in the deployment layer alongside Vercel, Netlify, and Render. I won't claim years of ops tenure that aren't stated.`,
       evidence: deploy?.props.desc || 'Containerized, reproducible deploys are part of the architecture model.',
     });
@@ -897,11 +892,10 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   }
 
   if (task === 'scalable_backend') {
-    const design = getIdentityClaimsByFacet('designPrinciples', identity);
     return opEvaluate(opCtx, {
-      conclusion: `Yes — within the scope of what he's actually shipped.`,
+      conclusion: `Yes — within the scope of what I've actually shipped.`,
       reasoning: `The shared pattern is a Python API layer, REST boundaries, an AI reasoning layer over real inputs, and deployable frontends — a solid foundation for scaling a service.`,
-      evidence: `I won't invent multi-region ops or Kafka-scale claims. ${design.map((c) => c.statement).join(' ')}`,
+      evidence: `I won't invent multi-region ops or Kafka-scale claims. Clear layer ownership is the honest scaling story here.`,
     });
   }
 

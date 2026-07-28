@@ -58,15 +58,16 @@ test('resolveAudienceMode: explicit + profile + default', () => {
   assert(resolveAudienceMode({ query: 'Tell me about QueryForgeAI' }) === 'default', 'default');
 });
 
-test('adaptDraft attaches audience mode metadata', () => {
+test('adaptDraft attaches audience mode metadata without lens labels', () => {
   const out = adaptDraft({
-    text: 'Yes — he can design REST APIs. Confidence is high because REST appears across systems.',
+    text: 'Yes — I can design REST APIs. Confidence is high because REST appears across systems.\n\nWant a project walkthrough next?',
     kind: 'text',
     payload: { _conversationalMove: 'Answer' },
   }, { visitorProfile: { type: 'engineer' }, query: 'Can he design REST APIs?' });
   assert(out.payload._audienceMode === 'engineer', 'mode');
   assert(out.payload._digitalBrain === DIGITAL_BRAIN.title, 'brain meta');
-  assert(/Engineering lens/i.test(out.text), 'lens');
+  assert(!/Engineering lens|Hiring lens|Founder lens|Learning lens/i.test(out.text), 'no lens labels');
+  assert(/Want the trade-offs|Should I go deeper/i.test(out.text), 'mode invite');
 });
 
 test('project callouts differ by mode', () => {
