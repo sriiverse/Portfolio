@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sriiverse.knowledge.embedding.schema.json",
+  "title": "KnowledgeEmbeddingHook",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "none",
+        "pending",
+        "ready",
+        "stale"
+      ]
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dims": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "vector": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "number"
+      }
+    },
+    "updatedAt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

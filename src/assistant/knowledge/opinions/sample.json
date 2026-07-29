@@ -1,0 +1,39 @@
+{
+  "id": "opinions.microservices.v1",
+  "version": "1.0.0",
+  "category": "opinions",
+  "tags": [
+    "microservices",
+    "architecture",
+    "opinion"
+  ],
+  "metadata": {
+    "author": "sriiverse",
+    "confidence": "inferred",
+    "graphLabel": "Opinion 5"
+  },
+  "content": {
+    "topic": "microservices",
+    "opinionId": 5,
+    "stance": "Useful when deploy/scale ownership diverges; overrated as default fashion.",
+    "experienceScope": "Modular monolith across three shipped AI products; no microservice mesh shipped."
+  },
+  "relationships": [
+    {
+      "to": "conversations.self-intro.v1",
+      "type": "surfaces_in",
+      "weight": 1.0,
+      "label": "Conversation R-021"
+    },
+    {
+      "to": "engineering.five-layer.v1",
+      "type": "grounded_by",
+      "weight": 1.1
+    },
+    {
+      "to": "failures.ai-layer.v1",
+      "type": "drawn_from",
+      "weight": 1.0
+    }
+  ]
+}

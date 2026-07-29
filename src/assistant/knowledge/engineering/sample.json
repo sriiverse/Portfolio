@@ -1,0 +1,50 @@
+{
+  "id": "engineering.five-layer.v1",
+  "version": "1.0.0",
+  "category": "engineering",
+  "tags": [
+    "architecture",
+    "five-layer",
+    "trade-offs"
+  ],
+  "metadata": {
+    "author": "sriiverse",
+    "confidence": "documented",
+    "graphLabel": "Engineering Principle 12"
+  },
+  "content": {
+    "topic": "five-layer-architecture",
+    "principleId": 12,
+    "summary": "Frontend → Backend → AI reasoning → Data → Deploy, with AI grounded in real inputs.",
+    "layers": [
+      "Frontend",
+      "Backend",
+      "AI",
+      "Data",
+      "Deploy"
+    ],
+    "tradeoffs": [
+      "More moving parts than a monolith",
+      "Clear ownership of correctness vs generation"
+    ]
+  },
+  "relationships": [
+    {
+      "to": "failures.ai-layer.v1",
+      "type": "informed_by_failure",
+      "weight": 1.3,
+      "label": "Failure Story 3"
+    },
+    {
+      "to": "opinions.microservices.v1",
+      "type": "contrasts_with",
+      "weight": 1.0,
+      "label": "Opinion 5"
+    },
+    {
+      "to": "projects.queryforge.overview.v1",
+      "type": "exemplified_by",
+      "weight": 1.4
+    }
+  ]
+}

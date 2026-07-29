@@ -1,0 +1,39 @@
+{
+  "id": "behavioral.disagreement.v1",
+  "version": "1.0.0",
+  "category": "behavioral",
+  "tags": [
+    "soft-skills",
+    "disagreement",
+    "ownership"
+  ],
+  "metadata": {
+    "author": "sriiverse",
+    "confidence": "inferred",
+    "graphLabel": "Behavior Pattern 2"
+  },
+  "content": {
+    "situation": "Stack or product-direction disagreement",
+    "patternId": 2,
+    "approach": "Separate taste from constraints — latency, correctness, and ship window.",
+    "evidence": "Flask vs FastAPI chosen by I/O shape; grounded AI over flashy generation."
+  },
+  "relationships": [
+    {
+      "to": "conversations.self-intro.v1",
+      "type": "illustrated_in",
+      "weight": 1.0,
+      "label": "Conversation R-021"
+    },
+    {
+      "to": "engineering.five-layer.v1",
+      "type": "applies_to",
+      "weight": 1.1
+    },
+    {
+      "to": "identity.core.v1",
+      "type": "characterizes",
+      "weight": 0.9
+    }
+  ]
+}

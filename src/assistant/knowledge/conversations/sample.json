@@ -1,0 +1,43 @@
+{
+  "id": "conversations.self-intro.v1",
+  "version": "1.0.0",
+  "category": "conversations",
+  "tags": [
+    "intro",
+    "opening"
+  ],
+  "metadata": {
+    "author": "sriiverse",
+    "confidence": "documented",
+    "graphLabel": "Conversation R-021",
+    "conversationId": "R-021"
+  },
+  "content": {
+    "intent": "self_intro",
+    "conversationId": "R-021",
+    "beats": [
+      "Name and title",
+      "Three live AI products",
+      "Backend + applied AI center of gravity",
+      "Offer demo or architecture deep-dive"
+    ]
+  },
+  "relationships": [
+    {
+      "to": "behavioral.disagreement.v1",
+      "type": "exhibits_pattern",
+      "weight": 1.2,
+      "label": "Behavior Pattern 2"
+    },
+    {
+      "to": "identity.core.v1",
+      "type": "introduces",
+      "weight": 1.4
+    },
+    {
+      "to": "opinions.microservices.v1",
+      "type": "may_reference",
+      "weight": 0.9
+    }
+  ]
+}

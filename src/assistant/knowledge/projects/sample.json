@@ -1,0 +1,55 @@
+{
+  "id": "projects.queryforge.overview.v1",
+  "version": "1.0.0",
+  "category": "projects",
+  "tags": [
+    "queryforge",
+    "sql",
+    "ai",
+    "flask"
+  ],
+  "metadata": {
+    "author": "sriiverse",
+    "confidence": "documented",
+    "projectId": "queryforge",
+    "graphLabel": "QueryForge"
+  },
+  "content": {
+    "projectId": "queryforge",
+    "name": "QueryForgeAI",
+    "tagline": "Optimize database queries at the speed of thought.",
+    "problem": "Writing efficient SQL is hard without tooling that explains plans.",
+    "solution": "Natural language to SQL with schema-aware reasoning and explanations.",
+    "stack": [
+      "Python",
+      "Flask",
+      "PostgreSQL",
+      "React"
+    ],
+    "live": "https://example.com/queryforge"
+  },
+  "relationships": [
+    {
+      "to": "engineering.five-layer.v1",
+      "type": "applies_principle",
+      "weight": 1.4,
+      "label": "Engineering Principle — five-layer architecture"
+    },
+    {
+      "to": "failures.ai-layer.v1",
+      "type": "has_failure",
+      "weight": 1.2,
+      "label": "Failure Story — AI layer"
+    },
+    {
+      "to": "evaluation.prompt.which-project-first.v1",
+      "type": "evaluated_by",
+      "weight": 0.9
+    },
+    {
+      "to": "identity.core.v1",
+      "type": "authored_by",
+      "weight": 0.8
+    }
+  ]
+}

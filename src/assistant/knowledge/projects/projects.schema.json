@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sriiverse.knowledge.projects.schema.json",
+  "title": "ProjectsKnowledgeDocument",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "tags",
+    "category",
+    "metadata",
+    "content"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0
+    },
+    "category": {
+      "type": "string",
+      "const": "projects"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "documented",
+            "inferred",
+            "draft"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      }
+    },
+    "embedding": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "none",
+            "pending",
+            "ready",
+            "stale"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dims": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "vector": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number"
+          }
+        },
+        "updatedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "name"
+      ],
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tagline": {
+          "type": "string"
+        },
+        "problem": {
+          "type": "string"
+        },
+        "solution": {
+          "type": "string"
+        },
+        "stack": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "live": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

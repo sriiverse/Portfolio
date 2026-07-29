@@ -1,0 +1,44 @@
+{
+  "id": "failures.ai-layer.v1",
+  "version": "1.0.0",
+  "category": "failures",
+  "tags": [
+    "ai",
+    "queryforge",
+    "risk"
+  ],
+  "metadata": {
+    "author": "sriiverse",
+    "confidence": "inferred",
+    "graphLabel": "Failure Story 3",
+    "projectId": "queryforge"
+  },
+  "content": {
+    "area": "AI layer",
+    "storyId": 3,
+    "modes": [
+      "Schema drift breaking NL→SQL",
+      "Overconfident rewrites",
+      "Cold-start LLM latency"
+    ],
+    "mitigation": "Treat the model as a reasoning layer over real schema; surface explanations."
+  },
+  "relationships": [
+    {
+      "to": "opinions.microservices.v1",
+      "type": "leads_to_opinion",
+      "weight": 1.1,
+      "label": "Opinion 5"
+    },
+    {
+      "to": "engineering.five-layer.v1",
+      "type": "shaped_principle",
+      "weight": 1.3
+    },
+    {
+      "to": "projects.queryforge.overview.v1",
+      "type": "occurred_in",
+      "weight": 1.4
+    }
+  ]
+}

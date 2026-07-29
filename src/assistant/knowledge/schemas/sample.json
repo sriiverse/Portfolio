@@ -1,0 +1,30 @@
+{
+  "id": "schemas.envelope.example.v1",
+  "version": "1.0.0",
+  "category": "schemas",
+  "tags": [
+    "example"
+  ],
+  "metadata": {
+    "author": "sriiverse",
+    "confidence": "draft",
+    "graphLabel": "Schema Envelope Example"
+  },
+  "content": {
+    "note": "Example envelope only — not a domain fact."
+  },
+  "embedding": {
+    "status": "none",
+    "model": null,
+    "dims": null,
+    "vector": null,
+    "updatedAt": null
+  },
+  "relationships": [
+    {
+      "to": "identity.core.v1",
+      "type": "illustrates_envelope_for",
+      "weight": 0.5
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "id": "evaluation.prompt.which-project-first.v1",
+  "version": "1.0.0",
+  "category": "evaluation",
+  "tags": [
+    "regression",
+    "recommend",
+    "conversation-first"
+  ],
+  "metadata": {
+    "author": "sriiverse",
+    "suite": "conversation-quality",
+    "graphLabel": "Eval — which project first"
+  },
+  "content": {
+    "prompt": "Which project should I look at first and why?",
+    "expect": {
+      "mustNotContain": [
+        "### 🎯",
+        "**Problem:**"
+      ],
+      "mustMatch": [
+        "RepoRadar|QueryForge|Placement"
+      ],
+      "style": "spoken-recommend"
+    }
+  },
+  "relationships": [
+    {
+      "to": "projects.queryforge.overview.v1",
+      "type": "evaluates",
+      "weight": 1.3,
+      "label": "QueryForge"
+    },
+    {
+      "to": "conversations.self-intro.v1",
+      "type": "conversation_style",
+      "weight": 0.9,
+      "label": "Conversation R-021"
+    }
+  ]
+}

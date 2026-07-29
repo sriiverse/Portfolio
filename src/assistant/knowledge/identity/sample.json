@@ -1,0 +1,52 @@
+{
+  "id": "identity.core.v1",
+  "version": "1.0.0",
+  "category": "identity",
+  "tags": [
+    "intro",
+    "profile",
+    "positioning"
+  ],
+  "metadata": {
+    "author": "sriiverse",
+    "confidence": "documented",
+    "source": "portfolio-profile",
+    "graphLabel": "Identity Core"
+  },
+  "content": {
+    "name": "Sudhanshu Sinha",
+    "title": "Python Backend Engineer · AI Developer · Full-Stack Engineer",
+    "tagline": "Building Intelligent Software That Solves Real Problems.",
+    "summary": "Backend-leaning engineer who ships production AI systems end to end.",
+    "strengths": [
+      "Python services",
+      "REST APIs",
+      "Applied AI grounded in real data"
+    ]
+  },
+  "relationships": [
+    {
+      "to": "conversations.self-intro.v1",
+      "type": "opened_by",
+      "weight": 1.3,
+      "label": "Conversation R-021"
+    },
+    {
+      "to": "resume.journey.v1",
+      "type": "timeline",
+      "weight": 1.2
+    },
+    {
+      "to": "projects.queryforge.overview.v1",
+      "type": "ships",
+      "weight": 1.4,
+      "label": "QueryForge"
+    },
+    {
+      "to": "behavioral.disagreement.v1",
+      "type": "behaves_as",
+      "weight": 1.0,
+      "label": "Behavior Pattern 2"
+    }
+  ]
+}
