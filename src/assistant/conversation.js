@@ -175,6 +175,11 @@ export function classifyConversationMode(query) {
     return 'brief';
   }
 
+  // intro — conversational self-introduction (never Unknown/fallback)
+  if (/\b(tell me about yourself|introduce yourself|introduce you(?:rself)?|about yourself)\b/i.test(t)) {
+    return 'intro';
+  }
+
   return null;
 }
 

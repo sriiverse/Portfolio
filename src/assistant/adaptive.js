@@ -142,16 +142,13 @@ function buildContinuityLead(ctx, topic) {
   if (!turns || turns.length < 2) return null;
 
   const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
-  const task = ctx?.payload?._portfolioIntelligence
-    || ctx?.payload?._reasoningStrategy?.task
-    || '';
 
-  // Don't glue continuity onto greetings or unrelated dumps.
+  // V4.6.1 — continuity only on genuine follow-ups. False continuity is worse than none.
+  if (!isBoundFollowUpQuery(q)) return null;
   if (/^(hi|hello|hey)\b/i.test(q.trim())) return null;
 
-  // Mod 2 — continuity only when the bound topic matches what we'll answer about
   const boundId = memory?.lastCommitment?.projectId || memory?.lastProject;
-  if (boundId && topic.kind === 'project' && topic.id !== boundId && isBoundFollowUpQuery(q)) {
+  if (boundId && topic.kind === 'project' && topic.id !== boundId) {
     return null;
   }
 
@@ -159,16 +156,13 @@ function buildContinuityLead(ctx, topic) {
   if (!priorMentionsTopic) return null;
 
   // Current question already names the topic — skip redundant lead.
-  if (topic.re.test(q) && turns.length < 3) return null;
+  if (topic.re.test(q)) return null;
 
   if (topic.kind === 'project') {
-    if (/^why_/.test(task) || /\bwhy\b/i.test(q)) {
+    if (/\bwhy\b/i.test(q)) {
       return `Since we're talking about ${topic.name}, that choice sits right inside it.`;
     }
     return `Staying with ${topic.name} for a moment —`;
-  }
-  if (topic.id === 'architecture') {
-    return `Building on the architecture we were just discussing —`;
   }
   if (topic.kind === 'tech') {
     return `On ${topic.name} specifically —`;
@@ -473,7 +467,7 @@ function warrantsTradeOffBeat(q, mode, task) {
 }
 
 /**
- * V4.5 Mod 5 — answer-shape budget (emit/suppress rules, not new essays).
+ * V4.5 Mod 5 + V4.6.1 — answer-shape budget (emit/suppress + conversation length).
  */
 function applyAnswerShapeBudget(text, ctx = {}) {
   let out = String(text || '');
@@ -499,11 +493,62 @@ function applyAnswerShapeBudget(text, ctx = {}) {
   }
 
   // Conversational modes: prefer first-person; drop narrator hire-pitch reuse
-  if (mode === 'self' || mode === 'opinion' || mode === 'preference_gap' || mode === 'ops_story') {
+  if (mode === 'self' || mode === 'opinion' || mode === 'preference_gap' || mode === 'ops_story' || mode === 'intro') {
     out = out.replace(/^Hire (me|Sudhanshu) because[^\n]+\n*/i, '');
   }
 
+  // Strip brochure section headers if they leaked into a conversational answer
+  const wantsDocs = /\b(walk (me )?through|deep dive|in detail|documentation|open (the )?project|architecture of|stack for)\b/i.test(q);
+  if (!wantsDocs) {
+    out = out
+      .replace(/^##\s+[^\n]+\n+/gm, '')
+      .replace(/^###\s*[🎯🏗️⚡💡🔗📚🔧🚀]\s*[^\n]+\n+/gm, '')
+      .replace(/^\*\*Problem:\*\*\s*/gm, '')
+      .replace(/^\*\*Solution:\*\*\s*/gm, '');
+  }
+
+  // Default conversation length: ~4–8 sentences unless explicit expansion/docs
+  const wantsExpand = wantsDocs
+    || /\b(more detail|go deeper|elaborate|expand|full (explanation|write-?up)|everything about)\b/i.test(q)
+    || isBoundFollowUpQuery(q);
+  if (!wantsExpand && !/^## /m.test(out) && !/\| Dimension \|/i.test(out) && !/^\|/m.test(out)) {
+    out = clampConversationalLength(out, 8);
+  }
+
+  // Drop weak documentary leads when a real answer follows
+  out = out.replace(/^[^\n]+ is one of the shipped projects\.?\n+/i, '');
+  out = out.replace(/^[^\n]+ shows up in the shipped stack\.?\n+/i, '');
+
   return out.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Keep invite (trailing question) while capping body to ~4–8 sentences / 3 paras. */
+function clampConversationalLength(text, maxSentences) {
+  const parts = String(text || '').split(/\n\n+/).filter((p) => p.trim());
+  if (!parts.length) return text;
+  const last = parts[parts.length - 1];
+  const invite = /\?\s*$/.test(last.trim()) ? last : null;
+  let body = invite ? parts.slice(0, -1) : parts.slice();
+  body = body.slice(0, 3);
+
+  let count = 0;
+  const kept = [];
+  for (const para of body) {
+    const sentences = para.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [para];
+    const slice = [];
+    for (const s of sentences) {
+      if (count >= maxSentences) break;
+      const t = s.trim();
+      if (t) {
+        slice.push(t);
+        count += 1;
+      }
+    }
+    if (slice.length) kept.push(slice.join(' '));
+    if (count >= maxSentences) break;
+  }
+  const out = kept.join('\n\n').trim();
+  return invite ? `${out}\n\n${invite}` : out;
 }
 
 /**
@@ -575,7 +620,7 @@ export function applyConversationFlow(text, ctx = {}) {
 
   // Mod 5 — at most one invite; suppress generic demo forks on soft/opinion/gap
   const mode = ctx?.questionFrame?.conversationMode;
-  const softMode = ['preference_gap', 'opinion', 'self', 'ops_story'].includes(mode);
+  const softMode = ['preference_gap', 'opinion', 'self', 'ops_story', 'intro', 'brief'].includes(mode);
   if (!endsWithQuestion(out)) {
     const invite = pickContextualInvite(ctx, move || 'Answer');
     if (invite && !(softMode && /live demo|strongest live|open that demo/i.test(invite))) {

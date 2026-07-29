@@ -6,7 +6,7 @@
 
 A handcrafted, **build-free** single-page portfolio with an embedded reasoning assistant (**SRIIVERSE AI**). No npm install, no bundler — serve the folder and open it.
 
-[Live demo](https://github.com/sriiverse/Portfolio) · [Evaluation suite](docs/AI_EVALUATION_SUITE.md) · [Final benchmark](docs/FINAL_BENCHMARK.md)
+[Live demo](https://github.com/sriiverse/Portfolio) · [Upgrade history](docs/UPGRADE_HISTORY.md) · [Changelog](docs/CHANGELOG.md) · [Evaluation suite](docs/AI_EVALUATION_SUITE.md)
 
 ---
 
@@ -34,7 +34,7 @@ Windows helper: `.\serve.ps1`
 | Surface | What it does |
 |---|---|
 | **Portfolio** | Hero (Three.js), projects, stack, five-layer architecture, journey, contact |
-| **SRIIVERSE AI** | Offline portfolio assistant with a full reasoning pipeline |
+| **SRIIVERSE AI** | Offline portfolio assistant — conversation-first engineering dialogue |
 | **Recruiter mode** | Hiring-fit answers grounded in shipped work |
 | **Resume intelligence** | Conversational background summary (no PDF required) |
 | **JD matching** | Paste a job description → match score, gaps, talking points |
@@ -42,27 +42,61 @@ Windows helper: `.\serve.ps1`
 
 ---
 
+## Assistant evolution (at a glance)
+
+```mermaid
+flowchart LR
+  R[Reasoning Engine<br/>Phases 1–6] --> V3[V3 Moves + Operators]
+  V3 --> V4[V4 Digital Engineering Brain]
+  V4 --> V45[V4.5 Conversation Quality]
+  V45 --> V46[V4.6.1 Conversation-First Render]
+```
+
+| Release | Focus |
+|---|---|
+| **Reasoning Engine** | Question → entities → evidence → confidence → plan → compose |
+| **V3** | Conversational moves; decision-first recommend / evaluate / rank |
+| **V4** | Knowledge graph, decision records, identity, operators, reflection, adaptive audiences |
+| **V4.5** | Intent gate, bound follow-ups, gap/presentation/shape quality |
+| **V4.6.1** | Answer first; brochure only when the visitor asks for a walkthrough |
+
+Full narrative with diagrams: **[`docs/UPGRADE_HISTORY.md`](docs/UPGRADE_HISTORY.md)**.  
+Latest rendering contract: **[`docs/V4_6_CONVERSATION_FIRST_RENDERING.md`](docs/V4_6_CONVERSATION_FIRST_RENDERING.md)**.
+
+---
+
 ## Reasoning pipeline
 
-SRIIVERSE AI runs an eight-stage pipeline (Phases 1–6 + composition polish), validated against a **203-question** suite:
+SRIIVERSE AI runs a staged pipeline, then adaptive flow and reflection:
 
 ```
 Mode / Command Gate
-  → Question Understanding
+  → Question Understanding (+ conversation mode)
   → Entity Resolution
   → Evidence Selection
   → Confidence
   → Response Planning
-  → Response Composition
+  → Response Composition (± operator synthesis)
+  → Adaptive flow (audience, continuity, length)
+  → Reflection finalize
 ```
+
+**Conversation vs documentation**
+
+| Ask | Behavior |
+|---|---|
+| “Which project first?” / “Why Flask?” / “Criticize X” | Spoken answer (project supports) |
+| “Walk me through X” / architecture deep dive | Project documentation card |
+
+**Design rules:** knowledge first, never fabricate, honest decline when data is missing, expand only when asked.
 
 | Doc | Purpose |
 |---|---|
-| [`docs/REASONING_ENGINE_SPEC.md`](docs/REASONING_ENGINE_SPEC.md) | Implementation contract |
-| [`docs/AI_EVALUATION_SUITE.md`](docs/AI_EVALUATION_SUITE.md) | 203-question ground truth |
-| [`docs/FINAL_BENCHMARK.md`](docs/FINAL_BENCHMARK.md) | Full-suite results (**0 hard fails**, **0 hallucinations** after greeting fix) |
-
-**Design rules:** knowledge first, never fabricate, honest decline when data is missing, greetings do not require evidence.
+| [`docs/UPGRADE_HISTORY.md`](docs/UPGRADE_HISTORY.md) | Professional upgrade record + diagrams |
+| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Versioned release notes |
+| [`docs/REASONING_ENGINE_SPEC.md`](docs/REASONING_ENGINE_SPEC.md) | Pipeline contract |
+| [`docs/AI_EVALUATION_SUITE.md`](docs/AI_EVALUATION_SUITE.md) | Evaluation ground truth |
+| [`docs/FINAL_BENCHMARK.md`](docs/FINAL_BENCHMARK.md) | Suite results |
 
 ---
 
@@ -77,17 +111,19 @@ src/
   sections.js              Projects, orbs, architecture, timeline
   assistant.js             Orchestrator (pipeline + mode gates)
   assistant/
-    conversation.js        Question Understanding
+    conversation.js        Question Understanding + conversationMode
     entities.js            Entity Resolution + Confidence
     knowledge.js           Evidence Selection (scoped retrieval)
     planning.js            Response Planning (ResponsePlan / blocks)
-    providers.js           Response Composition + LocalProvider
-    persona.js             Authored voice (SELF_MODEL, TECH_TAKES)
-    memory.js / awareness.js
+    providers.js           Composition + brochure gate
+    reasoning.js           Strategy classify + V4 operators
+    graph.js / decisions.js / identity.js
+    reflection.js / adaptive.js / persona.js / memory.js
     jdmatch.js / interview.js / tools.js / renderer.js
   styles.css               Design system
-docs/                      Specs, plans, phase validations, benchmark
+docs/                      Specs, upgrade history, validations, changelog
 assets/                    Static assets (e.g. resume.pdf)
+tests/                     Sprint 2 + V4 regression suites
 ```
 
 ---
@@ -123,10 +159,13 @@ Assistant voice and tech opinions live in **`src/assistant/persona.js`** (`ASSIS
 
 | Document | Topic |
 |---|---|
+| [UPGRADE_HISTORY.md](docs/UPGRADE_HISTORY.md) | Full upgrade narrative + diagrams (V3→V4.6.1) |
+| [V4_6_CONVERSATION_FIRST_RENDERING.md](docs/V4_6_CONVERSATION_FIRST_RENDERING.md) | Latest rendering contract |
+| [CHANGELOG.md](docs/CHANGELOG.md) | Versioned release notes |
 | [PROJECT_ARCHITECTURE.md](docs/PROJECT_ARCHITECTURE.md) | System overview |
 | [AI_ASSISTANT_SPEC.md](docs/AI_ASSISTANT_SPEC.md) | Assistant product spec |
+| [REASONING_ENGINE_SPEC.md](docs/REASONING_ENGINE_SPEC.md) | Pipeline contract |
 | [CURSOR_RULES.md](docs/CURSOR_RULES.md) | Engineering constraints |
-| [CHANGELOG.md](docs/CHANGELOG.md) | Version history |
 | [CONTRIBUTING.md](docs/CONTRIBUTING.md) | How to contribute |
 | [PHASE_1…6_VALIDATION.md](docs/) | Per-phase validation reports |
 | [RENDERING_POLISH_VALIDATION.md](docs/RENDERING_POLISH_VALIDATION.md) | Composition polish |

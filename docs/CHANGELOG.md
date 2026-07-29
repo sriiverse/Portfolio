@@ -37,7 +37,7 @@ Example
 - Semantic (embedding) retrieval
 - Advanced interview difficulty levels / evidence generation
 
-> Resume analysis, JD matching, recruiter mode, interview mode, Conversation Intelligence, and the full Reasoning Engine (Phases 1–6 + composition polish) are **shipped**. Items above are future vision from `docs/AI_ASSISTANT_SPEC.md`, not missing base features.
+> Resume analysis, JD matching, recruiter mode, interview mode, Conversation Intelligence, the Reasoning Engine (Phases 1–6), V3–V4 intelligence layers, V4.5 conversation quality, and V4.6.1 conversation-first rendering are **shipped**. Items above are future vision from `docs/AI_ASSISTANT_SPEC.md`, not missing base features.
 
 ---
 
@@ -47,6 +47,69 @@ Example
 - Architecture diagrams
 - Embedded walkthrough videos
 - Analytics dashboard
+
+---
+
+# [1.7.0] - 2026-07-29 (V4.6.1 Conversation-First Rendering)
+
+### Added
+
+- Conversation-first rendering contract: answer the question first; use projects as supporting evidence; emit brochure cards only in explicit documentation mode.
+- `intro` conversation mode (`tell me about yourself` / `introduce yourself`) → spoken `self_intro`.
+- Spoken `project_overview` for explain/tell-me-about project asks (non-walkthrough).
+- Named-project walkthrough resolution in composition (query → project card even when retrieval ranks resume higher).
+- Repository overview: `docs/UPGRADE_HISTORY.md`, `docs/V4_6_CONVERSATION_FIRST_RENDERING.md`.
+
+### Changed
+
+- `buildSystemPrompt()` no longer instructs Problem/Solution/Features section dumps by default.
+- `_allowsProjectBrochure()` tightened; project retrieval no longer implies project rendering.
+- Continuity leads only on genuine follow-ups (`isBoundFollowUpQuery`).
+- Default conversational length budget (~4–8 sentences) unless the visitor asks to expand or requests documentation mode.
+- Recommend routing covers “which project should I look at first…” style asks.
+
+### Validation
+
+- Sprint 2 **51/51**; V4 adaptive / reflection / graph / decisions / identity suites green.
+
+---
+
+# [1.6.0] - 2026-07-29 (V4.5 Conversation Quality)
+
+### Added
+
+- Conversational Intent Gate (`challenge`, `self`, `opinion`, `preference_gap`, `ops_story`, `probe`, `brief`).
+- Bound follow-up state on session memory (`lastCommitment`, `activeMode`, `bindConversationState`).
+- Gap/fallback dedupe; presentation gate; answer-shape budget (V4.5 Phase 2–3 quality mods).
+- Phase 1 first-person voice polish (short-first openings, no lens stickers / internal IDs).
+
+### Changed
+
+- Employment-at-FAANG asks no longer misroute to interview project pitches.
+- Soft-skill / opinion / failure-mode asks prefer spoken operators over brochure or false gaps.
+- Adaptive invites and trade-off garnish become policy-gated rather than always-on.
+
+### Validation
+
+- Sprint 2 **51/51** preserved through quality mods.
+
+---
+
+# [1.5.0] - 2026-07-28 (V4 Digital Engineering Brain)
+
+### Added
+
+- V4 Phase 1 knowledge graph (`graph.js`) + validation docs/tests.
+- V4 Phase 2 decision records (`decisions.js`).
+- V4 Phase 3 engineering identity (`identity.js`).
+- Generic reasoning operators over graph / decisions / identity (`reasoning.js` rewrite).
+- Reflection engine (`reflection.js`) wired before render return.
+- Digital Engineering Brain persona + adaptive audience modes (`adaptive.js`, `persona.js`).
+
+### Changed
+
+- Sprint 2 synthesis path dispatches to operators instead of project-id case tables.
+- Audience emphasis (recruiter / engineer / founder / student) without inventing facts.
 
 ---
 

@@ -60,27 +60,20 @@ function buildSystemPrompt(profile) {
   const name = profile.name;
   return [
     `You are SRIIVERSE AI — the digital engineering brain of ${name}, a Python backend engineer, AI developer, and full-stack engineer.`,
-    `You are NOT a chatbot or FAQ. You are the intelligent operating system of ${name}'s portfolio.`,
-    `You think, communicate, and reason exactly as ${name} would during a live technical walkthrough or engineering interview.`,
+    `You speak as ${name} would in a live engineering conversation — not as a portfolio page or FAQ.`,
     ``,
     `CORE RULES:`,
     `1. ONLY answer from the provided portfolio context. If the context doesn't cover it, say so honestly.`,
     `2. Never invent technologies, metrics, employers, or experience that are not in the context.`,
-    `3. Explain engineering decisions — not just features. Always answer What → Why → How → Trade-offs.`,
-    `4. Be concise and confident. Write like an engineer, not a marketer.`,
-    `5. Adapt emphasis to the visitor: recruiter (fit/demos), engineer (trade-offs), founder (ownership/ship speed), student (teaching clarity).`,
-    `5. Use markdown formatting. Structure responses with headers, bullets, and code where relevant.`,
-    `6. Cite sources as [n] referencing the numbered context chunks.`,
-    `7. End every substantive response with 2-3 meaningful follow-up suggestions.`,
+    `3. Answer the visitor's question first in plain speech (typically 4–8 sentences).`,
+    `4. Use a project as supporting evidence when useful — never replace the answer with a project dump.`,
+    `5. Be concise and confident. Write like an engineer, not a marketer.`,
+    `6. Adapt emphasis to the visitor: recruiter (fit/demos), engineer (trade-offs), founder (ownership/ship speed), student (teaching clarity).`,
+    `7. Cite sources as [n] referencing the numbered context chunks when helpful.`,
+    `8. End with at most one natural follow-up question when it helps the conversation.`,
     ``,
-    `RESPONSE STRUCTURE for project questions:`,
-    `## [ProjectName]`,
-    `**[tagline]**`,
-    `### 🎯 What it does`,
-    `### 🏗️ How it's built`,
-    `### ⚡ Technology Stack`,
-    `### 💡 Engineering Decisions`,
-    `### 🔗 Live`,
+    `DOCUMENTATION MODE (only when the visitor explicitly asks for a walkthrough, architecture deep dive, project documentation, "open project", or "explain in detail"):`,
+    `Then you may use structured markdown sections. Otherwise do NOT render Problem / Solution / Features / Architecture / Technology Stack / Live Demo section headers.`,
   ].join('\n');
 }
 
@@ -888,6 +881,31 @@ const LocalProvider = {
       return { text: this._fallback(ctx), sources: [], kind: 'text', payload: null };
     }
 
+    const qRaw = String(ctx?.questionFrame?.rawQuery || '');
+
+    // V4.6.1 — explicit documentation mode: render project card from the named
+    // project, independent of which evidence docs retrieve ranked first.
+    if (this._allowsProjectBrochure(ctx)) {
+      const proj = this._projectNamedInQuery(ctx);
+      if (proj) {
+        const mode = /\b(tech )?stack\b/i.test(qRaw) ? 'stack'
+          : /\barchitect/i.test(qRaw) && !/\bwalk (me )?through\b/i.test(qRaw) ? 'architecture'
+            : 'full';
+        const text = this._projectCardMarkdown(proj, mode, ctx?.visitorProfile, ctx?.memory);
+        this._bindConversationState(ctx, { task: 'project_walkthrough' }, text);
+        return {
+          text,
+          sources: [{ source: proj.name, link: proj.live || null }],
+          kind: 'project-card',
+          payload: {
+            project: proj,
+            _conversationalMove: 'Answer',
+            _portfolioIntelligence: 'project_walkthrough',
+          },
+        };
+      }
+    }
+
     const seenFragments = new Set();
     const paragraphs = [];
     const sourcesAcc = [];
@@ -927,7 +945,6 @@ const LocalProvider = {
     let spoken = null;
     let intelligenceIntent = null;
     let reasoningMeta = null;
-    const qRaw = String(ctx?.questionFrame?.rawQuery || '');
     const classification = (move !== 'Greeting' && move !== 'Clarify')
       ? classifyReasoningStrategy(qRaw, ctx)
       : { strategy: null, task: null };
@@ -1517,49 +1534,57 @@ const LocalProvider = {
   },
 
   /**
-   * V4.5 Mod 4 — when chat may emit ## / emoji / Problem–Solution brochure.
+   * Resolve a shipped project named in the current question (render-time only).
+   */
+  _projectNamedInQuery(ctx) {
+    const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '').toLowerCase();
+    if (!q) return null;
+    return getAllProjects().find((p) => q.includes(p.id) || q.includes(p.name.toLowerCase())) || null;
+  },
+
+  /**
+   * V4.6.1 — brochure / documentation cards only for explicit doc-mode asks.
+   * Project retrieval alone never implies project rendering.
    */
   _allowsProjectBrochure(ctx, cardMode = 'full') {
     const q = String(ctx?.questionFrame?.rawQuery || '');
     const cMode = ctx?.questionFrame?.conversationMode;
     if (cMode) return false;
     if (isBoundFollowUpQuery(q)) return false;
-    if (/\b(60.?seconds?|tl;?dr|briefly|three talking points|plain english|elevator)\b/i.test(q)) return false;
-    if (/\b(criticiz|failure mode|scale .{0,20}qps|complexity|on-?call|regret|mistake|overrated|thin wrapper|bad choice|over-?engineered)\b/i.test(q)) {
-      return false;
+
+    // Explicit documentation / walkthrough mode only
+    if (/\b(walk (me )?through|deep dive|in detail|documentation|document|open (the )?project|project page|full (write-?up|breakdown))\b/i.test(q)) {
+      return true;
     }
-    const qType = ctx?.questionFrame?.questionType;
-    if (qType === 'ArchitectureExplanation' || qType === 'ProjectExplanation') return true;
-    if (cardMode === 'architecture' || cardMode === 'stack') {
-      return /\b(architect|stack|technolog|how.*(built|work)|built)\b/i.test(q);
+    if (/\barchitecture (of|for|deep)\b/i.test(q) || /\b(tech )?stack (of|for)\b/i.test(q)) {
+      return true;
     }
-    return /\b(walk (me )?through|tell me about|show me|what is|explain|open|demo|describe)\b/i.test(q);
+    if (cardMode === 'architecture' && /\bhow (is|was) .{0,40}(built|designed|architect)/i.test(q)) {
+      return true;
+    }
+    return false;
   },
 
-  /** Spoken project summary — no marketing markdown sections. */
+  /**
+   * V4.6.1 — project as supporting evidence (1–2 sentences), never a brochure.
+   */
   _spokenProjectSummary(proj, cardMode = 'full') {
     if (cardMode === 'stack') {
-      return [
-        `**${proj.name}** stack: ${(proj.stack || []).map((s) => `\`${s}\``).join(' · ')}.`,
-        proj.decisions?.[0] || 'Chosen for production correctness and velocity.',
-      ].join('\n\n');
+      const stack = (proj.stack || []).slice(0, 6).map((s) => `\`${s}\``).join(', ');
+      return `${proj.name} ships with ${stack || 'its documented stack'}.`;
     }
     if (cardMode === 'architecture') {
-      return [
-        `**${proj.name}** is built so the backend owns orchestration and AI stays a reasoning layer over real data.`,
-        (proj.decisions || []).slice(0, 2).map((d, i) => `${i + 1}. ${d}`).join('\n'),
-        `Live: ${proj.live}${proj.repo ? ` · ${proj.repo}` : ''}`,
-      ].filter(Boolean).join('\n\n');
+      const beat = (proj.decisions || [])[0];
+      return beat
+        ? `On ${proj.name}, ${beat.replace(/\.$/, '')}.`
+        : `${proj.name} keeps AI as a reasoning layer over real data, with the backend owning orchestration.`;
     }
-    const solutionBeat = String(proj.solution || '')
-      .split(/(?<=\.)\s+/)
-      .slice(0, 2)
-      .join(' ');
-    return [
-      `**${proj.name}** — ${proj.tagline}`,
-      solutionBeat || proj.problem,
-      `Live: ${proj.live}${proj.repo ? ` · Repo: ${proj.repo}` : ''}`,
-    ].filter(Boolean).join('\n\n');
+    const why = String(proj.tagline || proj.solution || '')
+      .split(/(?<=\.)\s+/)[0]
+      .trim();
+    return why
+      ? `${proj.name} — ${why.replace(/\.$/, '')}.`
+      : `${proj.name} is one of the shipped production systems.`;
   },
 
   /** Every fact resolves (via its own `docId`) to a doc about the same

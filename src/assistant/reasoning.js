@@ -228,6 +228,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (mode === 'brief') {
     return { strategy: 'Summarize', task: 'brief_pitch' };
   }
+  if (mode === 'intro') {
+    return { strategy: 'Summarize', task: 'self_intro' };
+  }
   if (mode === 'probe') {
     if (/failure mode/i.test(t)) return { strategy: 'Explain', task: 'probe_failure_modes' };
     if (/scale|qps|rps/i.test(t)) return { strategy: 'Explain', task: 'probe_scale' };
@@ -305,7 +308,10 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (/most (technically )?(difficult|complex|challenging)|hardest project/i.test(t)) {
     return { strategy: 'Rank', task: 'most_difficult', focus: 'complexity' };
   }
-  if (/show first|see first|interview first|open with|lead with|demo first|should i (see|demo|open)/i.test(t)) {
+  if (/show first|see first|look at first|check out first|start with|interview first|open with|lead with|demo first|should i (see|demo|open|look|check|start)/i.test(t)
+    || /which project should i (look at|see|check|start|open|demo)/i.test(t)
+    || /which project.*(first|start with)/i.test(t)
+    || /project should i (look at|see).*(first|why)/i.test(t)) {
     return { strategy: 'Recommend', task: 'interview_first', focus: 'recruiterImpact' };
   }
   if (/demonstrat\w* backend|best.*(for )?backend|backend engineering (the )?most|most.*backend/i.test(t)) {
@@ -363,11 +369,18 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (/why (was )?(this |the )?architecture|why.*(chosen|choose|designed)/i.test(t) && /architect|layer|system|design|built/i.test(t)) {
     return { strategy: 'Explain', task: 'arch_why' };
   }
-  if (/trade-?offs?|what would you (improve|change|rebuild)|if you rebuilt/i.test(t)) {
+  if (/trade-?offs?|what would you (improve|change|rebuild)|would you (improve|change|rebuild)|if you rebuilt|rebuild .{0,24}differently/i.test(t)) {
     return { strategy: 'Explain', task: 'arch_tradeoffs' };
   }
   if (/how (do|does|would) (these |the )?projects? scale|do they scale|scalability/i.test(t)) {
     return { strategy: 'Explain', task: 'arch_scale' };
+  }
+
+  // Spoken project overview — not brochure (walkthrough/doc mode stays Describe/null → card)
+  if (!/\b(walk (me )?through|deep dive|in detail|documentation|open (the )?project)\b/i.test(t)
+    && /\b(tell me about|explain|describe|what is|what's)\b/i.test(t)
+    && /\b(queryforge|reporadar|placement)\b/i.test(t)) {
+    return { strategy: 'Summarize', task: 'project_overview' };
   }
 
   if (/tell me about sudhanshu|who is sudhanshu|what'?s this portfolio|about this portfolio|portfolio about|introduce sudhanshu/i.test(t)
@@ -880,10 +893,38 @@ function opSummarize(ctx, { task }) {
     ].join('\n\n');
   }
 
+  if (task === 'self_intro') {
+    const subject = ctx.identity.subject;
+    return [
+      `I'm ${subject?.name || 'Sudhanshu Sinha'} — a ${subject?.title || 'Python backend engineer and AI developer'}.`,
+      `I build and ship production AI systems end to end: ${ctx.profiles.map(nm).join(', ')}.`,
+      `Center of gravity is backend correctness and applied AI — models that reason over real data, not demos that invent product behavior.`,
+      `If you want proof fast, start with a live project; if you want depth, ask me why I made the architecture and stack calls I did.`,
+    ].join('\n\n');
+  }
+
+  if (task === 'project_overview') {
+    const q = String(ctx.query || '').toLowerCase();
+    const pick = /reporadar/i.test(q) ? ctx.byId('reporadar')
+      : /placement/i.test(q) ? ctx.byId('placementpro')
+        : ctx.byId('queryforge');
+    const p = pick || ctx.profiles[0];
+    const tagline = p?.tagline || p?.project?.tagline || 'a shipped production system';
+    const decision = (p?.decisions || p?.project?.decisions || [])[0]
+      || 'AI is treated as a reasoning layer over real inputs, with the backend owning correctness.';
+    return [
+      `${nm(p)} — ${tagline.replace(/\.$/, '')}.`,
+      decision,
+      `I built it to solve a concrete problem — not as a slide-deck prototype — and it's live if you want to poke at it.`,
+      `Ask if you want architecture, trade-offs, or a full walkthrough.`,
+    ].join('\n\n');
+  }
+
   if (task === 'identity') {
     return [
-      `I'm SRIIVERSE AI — the digital engineering brain of ${subject?.name || 'Sudhanshu Sinha'}.`,
-      opSummarize(ctx, { task: 'capabilities' }),
+      `I'm SRIIVERSE AI — ${subject?.name || 'Sudhanshu Sinha'}'s digital engineering brain.`,
+      `I can walk you through his shipped work the way he would: projects, architecture calls, stack trade-offs, and where the portfolio is honest about gaps.`,
+      `Ask me what to look at first, why a decision was made, or open a live demo — I'll stay inside what's actually evidenced.`,
     ].join('\n\n');
   }
 
@@ -1024,7 +1065,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   };
 
   // --- Summarize / identity ---
-  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'preference_gap'].includes(task)) {
+  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap'].includes(task)) {
     if (task === 'preference_gap') return opConversationMode(opCtx, { task });
     return opSummarize(opCtx, { task });
   }
