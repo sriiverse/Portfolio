@@ -222,6 +222,18 @@ export function isBoundFollowUpQuery(query) {
   return false;
 }
 
+/**
+ * Visitor asked for a direct answer with no menus / options / follow-ups.
+ */
+export function wantsDirectAnswerOnly(query) {
+  const t = String(query || '');
+  return (
+    /\bdo not (give|provide|offer|include|show)\b[\s\S]{0,80}\b(navigation|options|recommendations?|questions? (i|you) could|follow-?ups?|chips?|menus?)\b/i.test(t)
+    || /\b(without|no)\b[\s\S]{0,40}\b(navigation|options|recommendations?|follow-?ups?|menus?)\b/i.test(t)
+    || /\b(direct answer only|answer (me )?directly|only (the )?(actual |direct )?answer)\b/i.test(t)
+  );
+}
+
 // --- Subject resolution (docs/REASONING_ENGINE_SPEC.md Section 3.1) -------
 // Resolves WHO the question is fundamentally about, once, before any
 // questionType check below runs — the fix for Cluster A ("second-person-

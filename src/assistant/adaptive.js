@@ -14,7 +14,7 @@ import {
   DIGITAL_BRAIN,
   WELCOME_VARIANTS,
 } from './persona.js';
-import { isBoundFollowUpQuery } from './conversation.js';
+import { isBoundFollowUpQuery, wantsDirectAnswerOnly } from './conversation.js';
 
 export const MODE_IDS = Object.freeze([
   'recruiter', 'engineer', 'founder', 'student', 'default',
@@ -175,24 +175,27 @@ function buildContinuityLead(ctx, topic) {
    ============================================================ */
 
 const REFLECTION_POOL = [
-  { key: 'v45-ref-good', when: /why|trade|weak|fit|hire|compare|architect/i, text: "That's a good question." },
-  { key: 'v45-ref-thought', when: /why|decision|chose|trade/i, text: "I've thought about that quite a bit." },
-  { key: 'v45-ref-two', when: /or|vs|versus|compare|backend|frontend|fit/i, text: 'There are really two ways to look at this.' },
-  { key: 'v45-ref-nosimple', when: /can he|does he|is he|ready|know/i, text: "I don't think there's a simple yes-or-no answer." },
-  { key: 'v45-ref-trade', when: /why|flask|fastapi|react|postgres|architect/i, text: 'The trade-off is actually more interesting than the technology name.' },
+  { key: 'v45-ref-good', when: /\b(why|trade-?off|weak(?:est)?|fit|hire|compare|architect(?:ure)?)\b/i, text: "That's a good question." },
+  { key: 'v45-ref-thought', when: /\b(why|decision|chose|trade-?off)\b/i, text: "I've thought about that quite a bit." },
+  // Avoid bare "or" — it false-triggers on "connect to or inspect"
+  { key: 'v45-ref-two', when: /\b(?:vs\.?|versus|compare|either .{0,48} or|two (?:ways|approaches|options|angles))\b/i, text: 'There are really two ways to look at this.' },
+  { key: 'v45-ref-nosimple', when: /\b(?:can he|does he|is he|ready for|does he know)\b/i, text: "I don't think there's a simple yes-or-no answer." },
+  { key: 'v45-ref-trade', when: /\b(?:why|flask|fastapi|react|postgres|architect(?:ure)?)\b/i, text: 'The trade-off is actually more interesting than the technology name.' },
 ];
 
 function pickReflectionPhrase(ctx) {
   const move = ctx?.move || ctx?.payload?._conversationalMove;
   if (move === 'Greeting' || move === 'Clarify' || move === 'Decline') return null;
 
+  const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
+  const task = String(ctx?.payload?._portfolioIntelligence || '');
+  if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown') return null;
+
   const memory = ctx.memory;
   const turnCount = memory?.turnCount ?? (memory?.turns?.length || 0);
   // Sparse: only on turn 1, 4, 7… and never on a cold first message (turnCount 0).
   if (turnCount === 0 || turnCount % 3 !== 1) return null;
 
-  const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
-  const task = String(ctx?.payload?._portfolioIntelligence || '');
   const strategy = String(ctx?.payload?._reasoningStrategy?.strategy || '');
   const hay = `${q} ${task} ${strategy}`;
 
@@ -285,6 +288,9 @@ export function pickContextualInvite(ctx = {}, move = 'Answer') {
   const topic = inferSessionTopic(ctx);
   const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
   const modeId = resolveAudienceMode(ctx);
+
+  if (task === 'undocumented_detail' || task === 'honest_unknown') return null;
+  if (wantsDirectAnswerOnly(q)) return null;
 
   if (task === 'why_flask' || /\bwhy flask\b/i.test(q)) {
     return 'Want to compare it with FastAPI, or see how that decision shaped the architecture?';
@@ -621,6 +627,11 @@ export function applyConversationFlow(text, ctx = {}) {
   // Mod 5 — at most one invite; suppress generic demo forks on soft/opinion/gap
   const mode = ctx?.questionFrame?.conversationMode;
   const softMode = ['preference_gap', 'opinion', 'self', 'ops_story', 'intro', 'brief'].includes(mode);
+  const task = String(ctx?.payload?._portfolioIntelligence || ctx?.payload?._reasoningStrategy?.task || '');
+  const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
+  if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown') {
+    return out.replace(/\n{3,}/g, '\n\n').trim();
+  }
   if (!endsWithQuestion(out)) {
     const invite = pickContextualInvite(ctx, move || 'Answer');
     if (invite && !(softMode && /live demo|strongest live|open that demo/i.test(invite))) {

@@ -49,7 +49,7 @@ import { decideTool, runTool, runProactiveTool, setKnowledgeRef } from './assist
 import { getProvider } from './assistant/providers.js';
 import { looksLikeJobDescription } from './assistant/jdmatch.js';
 import { interview } from './assistant/interview.js';
-import { buildQuestionFrame, isBoundFollowUpQuery } from './assistant/conversation.js';
+import { buildQuestionFrame, isBoundFollowUpQuery, wantsDirectAnswerOnly } from './assistant/conversation.js';
 import { resolveEntities, assessConfidence } from './assistant/entities.js';
 import { buildResponsePlan } from './assistant/planning.js';
 import {
@@ -225,6 +225,12 @@ function buildAwarenessContext() {
    ============================================================ */
 function buildFollowups(intent, payload, focusProject, questionFrame) {
   const f = [];
+  const rawQ = questionFrame?.rawQuery || '';
+  if (wantsDirectAnswerOnly(rawQ)) return [];
+  if (payload?._portfolioIntelligence === 'undocumented_detail'
+    || payload?._reasoningStrategy?.task === 'undocumented_detail') {
+    return [];
+  }
   const proj = payload?.project
     ? payload.project
     : (focusProject ? knowledge.getProject(focusProject) : null);

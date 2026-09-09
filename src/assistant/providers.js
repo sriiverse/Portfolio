@@ -28,6 +28,7 @@ import {
   mayOverrideDecline,
   DECISION_FIRST_STRATEGIES,
 } from './reasoning.js';
+import { wantsDirectAnswerOnly } from './conversation.js';
 import { finalizeWithReflection } from './reflection.js';
 import {
   adaptDraft,
@@ -991,7 +992,9 @@ const LocalProvider = {
     this._bindConversationState(ctx, classification, spoken);
 
     payload = Object.assign({}, payload, {
-      ...(followupHint ? { _followupHint: followupHint } : {}),
+      ...(followupHint && !wantsDirectAnswerOnly(qRaw) && intelligenceIntent !== 'undocumented_detail'
+        ? { _followupHint: followupHint }
+        : {}),
       _conversationalMove: move,
       ...(intelligenceIntent ? { _portfolioIntelligence: intelligenceIntent } : {}),
       ...(reasoningMeta ? { _reasoningStrategy: reasoningMeta } : {}),
@@ -1299,6 +1302,12 @@ const LocalProvider = {
     const qType = ctx?.questionFrame?.questionType;
     const mode = ctx?.questionFrame?.conversationMode;
     const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
+    const task = ctx?.payload?._portfolioIntelligence
+      || ctx?.payload?._reasoningStrategy?.task
+      || '';
+    if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown') {
+      return null;
+    }
     // Don't bolt navigation/CTAs onto short identity / brand / beyond-resume answers
     if (mode === 'brief' || mode === 'beyond_resume' || mode === 'brand'
       || /\b(30.?second|beyond|what is sriiverse|are you sudhanshu|don'?t know)\b/i.test(q)) {
@@ -1403,7 +1412,15 @@ const LocalProvider = {
 
     let spoken = text;
     const inviteMove = move === 'Recommend' ? 'Recommend' : 'Answer';
-    const invite = this._inviteFor(plan, ctx, inviteMove);
+    const inviteCtx = {
+      ...ctx,
+      payload: {
+        ...(ctx.payload || {}),
+        _portfolioIntelligence: intent,
+        _reasoningStrategy: { strategy: classified.strategy, task: intent },
+      },
+    };
+    const invite = this._inviteFor(plan, inviteCtx, inviteMove);
     if (invite && !this._alreadyEndsWithInvite([spoken])) {
       spoken = `${spoken}\n\n${invite}`;
     }

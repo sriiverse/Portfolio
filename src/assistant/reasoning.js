@@ -416,10 +416,14 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Explain', task: 'arch_scale' };
   }
 
-  // Spoken project overview — not brochure (walkthrough/doc mode stays Describe/null → card)
-  if (!/\b(walk (me )?through|deep dive|in detail|documentation|open (the )?project)\b/i.test(t)
-    && /\b(tell me about|explain|describe|what is|what'?s)\b/i.test(t)
-    && /queryforge|reporadar|placement/i.test(t)) {
+  // Engineering-detail asks must never collapse into project_overview / tagline menus.
+  // Existing specific tasks (why_flask, arch_tradeoffs, probes, …) already returned above.
+  if (isEngineeringDetailQuery(t)) {
+    return { strategy: 'Summarize', task: 'undocumented_detail' };
+  }
+
+  // Spoken project overview — only genuine overview shapes (not "explain exactly…")
+  if (isGenuineProjectOverviewQuery(t)) {
     return { strategy: 'Summarize', task: 'project_overview' };
   }
 
@@ -462,11 +466,58 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Justify', task: 'why_hire' };
   }
 
-  if (/tell me about|what is|explain (queryforge|placement|reporadar)/i.test(t) && /queryforge|reporadar|placement/i.test(t)) {
+  if (isGenuineProjectOverviewQuery(t)) {
     return { strategy: 'Summarize', task: 'project_overview' };
   }
 
   return { strategy: 'Describe', task: null };
+}
+
+/**
+ * True when the visitor is asking for implementation / engineering detail
+ * rather than a product overview. Used to block overview misfires.
+ */
+export function isEngineeringDetailQuery(query) {
+  const t = String(query || '').toLowerCase();
+  if (!t.trim()) return false;
+  return (
+    /\bschema\b/i.test(t)
+    || /\b(user input|user inputs|user provides?|what (does|do) (the )?user (have to |need to )?provide|actual user inputs?)\b/i.test(t)
+    || /\breceives?\b/i.test(t)
+    || /\b(request body|payload)\b/i.test(t)
+    || /\b(api|endpoint)s?\b/i.test(t)
+    || /\b(data flow|request flow|request\/data flow)\b/i.test(t)
+    || /\bexecution\b/i.test(t)
+    || /\bexplain\s+analyze\b/i.test(t)
+    || /\bvalidation\b/i.test(t)
+    || /\bretry\b/i.test(t)
+    || /\b(database connection|connect(?:s|ed|ing)? to (a |the )?(live )?database|inspect(?:s|ed|ing)? (a |the )?(live )?database|database inspection)\b/i.test(t)
+    || /\b(llm|model|prompt)\b/i.test(t)
+    || /\b(failure|limitation|limitations|edge case)s?\b/i.test(t)
+    || /\btrade-?offs?\b/i.test(t)
+    || /\bwhy (was|were|is|are|did) .{0,40} chosen\b/i.test(t)
+    || /\bhow does .{0,60} actually work\b/i.test(t)
+    || /\bwhere does (the )?(database )?schema come from\b/i.test(t)
+    || /\b(live database|connect to or inspect)\b/i.test(t)
+  );
+}
+
+/**
+ * Overview-shaped project questions only — verb closely governing the project name.
+ * Instructional "Explain exactly…" / "Describe only…" must not match.
+ */
+export function isGenuineProjectOverviewQuery(query) {
+  const t = String(query || '').toLowerCase().trim();
+  if (!t || isEngineeringDetailQuery(t)) return false;
+  if (!/queryforge|reporadar|placement/i.test(t)) return false;
+  if (/\b(walk (me )?through|deep dive|in detail|documentation|open (the )?project)\b/i.test(t)) {
+    return false; // brochure/doc mode — leave to Describe/null → card path
+  }
+  const project = String.raw`(?:queryforgeai|queryforge|reporadarai|reporadar|placement\s*pro\+?)`;
+  if (new RegExp(String.raw`\b(?:tell me about|what is|what's)\s+${project}\b`, 'i').test(t)) return true;
+  if (new RegExp(String.raw`^(?:explain|describe)\s+${project}\b`, 'i').test(t)) return true;
+  if (new RegExp(String.raw`\b(?:explain|describe)\s+${project}\b`, 'i').test(t) && t.length < 72) return true;
+  return false;
 }
 
 function entitiesHasBrand(ctx) {
@@ -997,6 +1048,19 @@ function opSummarize(ctx, { task }) {
     ].join('\n\n');
   }
 
+  if (task === 'undocumented_detail') {
+    const q = String(ctx.query || '').toLowerCase();
+    const pick = /reporadar/i.test(q) ? ctx.byId('reporadar')
+      : /placement/i.test(q) ? ctx.byId('placementpro')
+        : /queryforge/i.test(q) ? ctx.byId('queryforge')
+          : null;
+    const focus = pick ? nm(pick) : 'that project';
+    return [
+      `That implementation detail for ${focus} is not documented in the portfolio knowledge yet.`,
+      `I can cover what's authored — purpose, features, stack, and the high-level engineering decisions on the record — but I won't invent schema sources, request/data flows, API internals, model/prompt behavior, or live-database connection behavior that isn't written down.`,
+    ].join('\n\n');
+  }
+
   if (task === 'self_intro') {
     const subject = ctx.identity.subject;
     return [
@@ -1167,7 +1231,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   };
 
   // --- Summarize / identity ---
-  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown'].includes(task)) {
+  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown', 'undocumented_detail'].includes(task)) {
     if (task === 'preference_gap') return opConversationMode(opCtx, { task });
     return opSummarize(opCtx, { task });
   }
