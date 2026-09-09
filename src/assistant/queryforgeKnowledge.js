@@ -81,6 +81,8 @@ export const QUERYFORGE_FACETS = [
       'request flow of',
       'how does queryforge actually work',
       'how does it actually work',
+      'how does queryforge.{0,40}actually generate',
+      'walk (me )?through.{0,40}(flow|generat)',
     ],
     text: [
       'Verified QueryForgeAI data flows have two cloud paths.',
@@ -103,15 +105,21 @@ export const QUERYFORGE_FACETS = [
       'where does the.*schema',
       'natural-language',
       'natural language',
+      'generate sql',
+      'actually generate',
+      'final sql',
+      'complete flow',
+      'from user input',
+      'user input to',
       'what queryforge.*receives',
       'request body',
       'payload',
     ],
     text: [
       'Generator data flow (verified): browser collects dialect + schema_def + question → POST /generate-sql to sql-optimizer-backend.onrender.com with body { schema_def, question, dialect }.',
-      'The backend injects the user-provided schema string into the LLM prompt context (when an LLM key is configured).',
-      'It does not introspect or connect to a live database to obtain schema on this path.',
-      'The model response is parsed into a query string plus explanation and returned to the UI.',
+      'The backend injects the user-provided schema_def string into the LLM prompt context (when an LLM key is configured). It does not introspect or connect to a live database to obtain schema on this path.',
+      'Primary model when configured: Google Gemini gemini-flash-latest. On Gemini HTTP 429, Groq llama-3.3-70b-versatile may be used when configured. Without an LLM key, demo/heuristic generation is used.',
+      'The model response is parsed into a query string plus explanation and returned to the UI. MongoDB has a static post-parse validator that may add warnings; SQL has no equivalent AST/runtime validator in the inspected code.',
     ].join(' '),
   },
   {
@@ -378,6 +386,13 @@ export function matchQueryForgeFacet(query) {
   if (designIntent && scoped) {
     const unk = QUERYFORGE_FACETS.find((f) => f.id === 'qf-unknowns');
     if (unk) return unk;
+  }
+
+  // Prefer generator data-flow when the ask is explicitly about NL → SQL generation.
+  if (scoped && /generat\w*.{0,40}sql|sql.{0,40}from.{0,40}(natural|question)|natural-?language question/i.test(t)
+    && /flow|walk|how does|under the hood|from user input|final sql/i.test(t)) {
+    const gen = QUERYFORGE_FACETS.find((f) => f.id === 'qf-dataflow-generator');
+    if (gen) return gen;
   }
 
   const depthRank = { unknown: 0, overview: 1, judgment: 2, architecture: 3, mechanics: 4 };

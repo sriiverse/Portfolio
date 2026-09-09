@@ -27,8 +27,10 @@ import {
   synthesizeReasoning,
   mayOverrideDecline,
   DECISION_FIRST_STRATEGIES,
+  isEngineeringDetailQuery,
 } from './reasoning.js';
 import { wantsDirectAnswerOnly } from './conversation.js';
+import { matchQueryForgeFacet } from './queryforgeKnowledge.js';
 import { finalizeWithReflection } from './reflection.js';
 import {
   adaptDraft,
@@ -1586,6 +1588,12 @@ const LocalProvider = {
     const cMode = ctx?.questionFrame?.conversationMode;
     if (cMode) return false;
     if (isBoundFollowUpQuery(q)) return false;
+
+    // Engineering / data-flow questions must use CODE-PROVEN facets — never the
+    // generic project card, even when they also say "walk me through".
+    if (isEngineeringDetailQuery(q)) return false;
+    const qfFacet = matchQueryForgeFacet(q);
+    if (qfFacet?.confidence === 'documented') return false;
 
     // Explicit documentation / walkthrough mode only
     if (/\b(walk (me )?through|deep dive|in detail|documentation|document|open (the )?project|project page|full (write-?up|breakdown))\b/i.test(q)) {

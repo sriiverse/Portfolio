@@ -34,6 +34,7 @@ import { classifyConversationMode, isBoundFollowUpQuery } from './conversation.j
 import {
   isQueryForgeQuery,
   matchQueryForgeFacet,
+  QUERYFORGE_FACETS,
 } from './queryforgeKnowledge.js';
 
 export const REASONING_STRATEGIES = [
@@ -514,7 +515,12 @@ export function isEngineeringDetailQuery(query) {
     || /\b(failure|limitation|limitations|edge case)s?\b/i.test(t)
     || /\btrade-?offs?\b/i.test(t)
     || /\bwhy (was|were|is|are|did) .{0,40} chosen\b/i.test(t)
-    || /\bhow does .{0,60} actually work\b/i.test(t)
+    || /\bhow does .{0,80} actually (work|generate|produce|build|create)\b/i.test(t)
+    || /\bhow is .{0,60} generated\b/i.test(t)
+    || /\bwhat happens (after|when|under|next)\b/i.test(t)
+    || /\bunder the hood\b/i.test(t)
+    || /\b(complete|full|end-?to-?end) (data |request )?flow\b/i.test(t)
+    || /\bwalk (me )?through .{0,60}(flow|pipeline|from .{0,30}(input|user)|generat)/i.test(t)
     || /\bwhere does (the )?(database )?schema come from\b/i.test(t)
     || /\b(live database|connect to or inspect)\b/i.test(t)
   );
@@ -1080,7 +1086,9 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'queryforge_detail' || task === 'queryforge_unknown') {
-    const facet = matchQueryForgeFacet(ctx.query);
+    const focusedId = ctx.classification?.focus;
+    const facet = (focusedId && QUERYFORGE_FACETS.find((f) => f.id === focusedId))
+      || matchQueryForgeFacet(ctx.query);
     if (task === 'queryforge_unknown' || facet?.confidence === 'unknown') {
       return [
         `That design-intent detail for **QueryForgeAI** is not documented as CODE-PROVEN FACT.`,
@@ -1264,6 +1272,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
 
   const opCtx = {
     graph, records, identity, profiles, byId, strategy, query, ctx,
+    classification,
   };
 
   // --- Summarize / identity ---

@@ -103,6 +103,20 @@ const CASES = [
     ban: [/Interested in why I chose/i, /What should he learn next/i],
     task: 'queryforge_detail',
   },
+  {
+    q: 'How does QueryForgeAI actually generate SQL from a natural-language question? Walk me through the complete flow from user input to the final SQL.',
+    must: [/schema_def/i, /generate-sql/i, /gemini|Gemini/i],
+    ban: [
+      /Python backend \(Flask\)|Flask keeps the AI/i,
+      /live schema|reasons over the live/i,
+      /Interested in why I chose/i,
+      /### 🏗️ How It's Built|### ⚡ Technology Stack|project_walkthrough/i,
+      /Optimize database queries at the speed of thought/i,
+    ],
+    task: 'queryforge_detail',
+    focus: 'qf-dataflow-generator',
+    kindBan: 'project-card',
+  },
 ];
 
 test('facet catalog is authored', () => {
@@ -147,11 +161,25 @@ for (const c of CASES) {
     const r = classifyReasoningStrategy(c.q, { questionFrame: frame, memory: {} });
     assert(r.task === c.task, `expected ${c.task}, got ${r.task}`);
     assert(r.task !== 'project_overview', 'must not be overview');
+    assert(r.task !== 'project_walkthrough', 'must not be walkthrough card');
+    if (c.focus) assert(r.focus === c.focus, `focus want=${c.focus} got=${r.focus}`);
     const text = synthesizeReasoning(r, c.q, { questionFrame: frame, memory: {} });
     for (const re of c.must) assert(re.test(text), `missing ${re} in: ${text.slice(0, 180)}`);
     for (const re of (c.ban || [])) assert(!re.test(text), `banned ${re}`);
   });
 }
+
+test('NL→SQL walkthrough retrieves generator facets over project card docs', () => {
+  const q = 'How does QueryForgeAI actually generate SQL from a natural-language question? Walk me through the complete flow from user input to the final SQL.';
+  const hits = retrieveScoped(q, { limit: 5, questionType: 'ProjectExplanation' });
+  assert(hits.length, 'hits');
+  assert(hits[0].doc.kind === 'project-detail', `top kind ${hits[0].doc.kind}`);
+  assert(
+    /data_flow|user_flow/i.test(hits[0].doc.facet || ''),
+    `top facet ${hits[0].doc.facet}`,
+  );
+  assert(hits[0].doc.id !== 'project-queryforge', 'must not top-rank project overview doc');
+});
 
 test('end-to-end cases answer without menus', async () => {
   for (const c of CASES) {
@@ -160,7 +188,9 @@ test('end-to-end cases answer without menus', async () => {
       out?.payload?._portfolioIntelligence === c.task,
       `${c.q.slice(0, 40)} → ${out?.payload?._portfolioIntelligence}`,
     );
+    if (c.kindBan) assert(out.kind !== c.kindBan, `kind must not be ${c.kindBan}`);
     for (const re of c.must) assert(re.test(out.text), `e2e missing ${re}`);
+    for (const re of (c.ban || [])) assert(!re.test(out.text), `e2e banned ${re}`);
     assert(!/Interested in why I chose this architecture/i.test(out.text), 'no arch invite');
     assert(!/What should he learn next/i.test(out.text), 'no learn-next');
   }
