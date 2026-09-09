@@ -228,6 +228,18 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (mode === 'brief') {
     return { strategy: 'Summarize', task: 'brief_pitch' };
   }
+  if (mode === 'beyond_resume') {
+    return { strategy: 'Summarize', task: 'beyond_resume' };
+  }
+  if (mode === 'brand') {
+    if (/are you|role|something else|sudhanshu.? or|or sriiverse/i.test(t)) {
+      return { strategy: 'Summarize', task: 'role_triad' };
+    }
+    if (/different|typical portfolio/i.test(t)) {
+      return { strategy: 'Summarize', task: 'portfolio_different' };
+    }
+    return { strategy: 'Summarize', task: 'brand_explain' };
+  }
   if (mode === 'intro') {
     return { strategy: 'Summarize', task: 'self_intro' };
   }
@@ -253,9 +265,21 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     if (/fastapi/i.test(t)) {
       return { strategy: 'Explain', task: 'why_fastapi' };
     }
-    if (/why that|why this|^(and )?why\b|so why/i.test(t)
+    if (/improve|change|rebuild|trade-?off/i.test(t)) {
+      return { strategy: 'Explain', task: 'arch_tradeoffs' };
+    }
+    if (/architect|why that architecture|why this architecture|why .{0,12}architecture/i.test(t)) {
+      return { strategy: 'Explain', task: 'arch_why' };
+    }
+    if (/how\b|how does|how did|how is|work\??$/i.test(t)) {
+      return { strategy: 'Explain', task: 'arch_why' };
+    }
+    if (/why that|why this|^(and )?why\b|so why|chose|choose/i.test(t)
       || /interview_first|recruiter_impress|best_work|faang_interview|demo_|keep_two|recommend/i.test(prevTask)) {
       return { strategy: 'Justify', task: 'followup_why_pick' };
+    }
+    if (/database|postgres|mongo|stack|frontend|backend/i.test(t)) {
+      return { strategy: 'Explain', task: 'project_overview' };
     }
   }
 
@@ -263,9 +287,25 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (/what can you do|what do you (do|offer|help with)|your capabilities|how can you help/i.test(t)) {
     return { strategy: 'Summarize', task: 'capabilities' };
   }
+  if (/don'?t know|something you don'?t know|what (don'?t|do not) you know|what is something you don'?t/i.test(t)) {
+    return { strategy: 'Summarize', task: 'honest_unknown' };
+  }
+  if (/what kind of engineer|what type of engineer|what engineer is he|what does (he|sudhanshu) (actually )?specialize|specialize in|speciali[sz]ation/i.test(t)) {
+    return { strategy: 'Summarize', task: 'engineer_type' };
+  }
   if (/who are you\b|what are you\b|are you (an? )?(ai|assistant|bot|chatgpt)\b/i.test(t)
-    || (qType === 'Identity' && !/remember|memory|external|api|llm|how.*(work|built)|what can you do|what do you do|who is sudhanshu|tell me about sudhanshu/i.test(t))) {
+    || (qType === 'Identity' && !/remember|memory|external|api|llm|how.*(work|built)|what can you do|what do you do|who is sudhanshu|tell me about sudhanshu|sriiverse|beyond|role|don'?t know|kind of engineer|type of engineer|specialize/i.test(t))) {
     return { strategy: 'Summarize', task: 'identity' };
+  }
+  if (/are you sudhanshu|sudhanshu,? sriiverse|sriiverse.? or something|or something else|what (is|are) your role|role inside/i.test(t)) {
+    return { strategy: 'Summarize', task: 'role_triad' };
+  }
+  if (/what is sriiverse|what is sriiverseai|what do you (actually )?know about sriiverse/i.test(t)
+    || (entitiesHasBrand(ctx) && /what is|tell me about|know about|does he know|do you know/i.test(t))) {
+    return { strategy: 'Summarize', task: 'brand_explain' };
+  }
+  if (/beyond (his |the |what'?s .{0,20})?resume|person behind|meeting the person|don'?t want to see .{0,24}resume|how does he approach|what does he care|makes (his )?projects interesting/i.test(t)) {
+    return { strategy: 'Summarize', task: 'beyond_resume' };
   }
   if (/how (do|does) (you|the assistant|this) work|are you (calling|using).*(api|llm)|external api|retrieval|embedding|knowledge base/i.test(t)) {
     return { strategy: 'Explain', task: 'assistant_mechanism' };
@@ -275,7 +315,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     || (/improve/i.test(t) && /where|what|area/i.test(t))) {
     return { strategy: 'Critique', task: 'weakest_area' };
   }
-  if (/learn next|should (he|sudhanshu) learn|gaps to (close|fill)/i.test(t)) {
+  if (/learn next|should (he|sudhanshu) learn|gaps to (close|fill)|should i learn|what should i learn|build systems like this/i.test(t)) {
     return { strategy: 'Critique', task: 'learn_next' };
   }
 
@@ -378,9 +418,14 @@ export function classifyReasoningStrategy(query, ctx = {}) {
 
   // Spoken project overview — not brochure (walkthrough/doc mode stays Describe/null → card)
   if (!/\b(walk (me )?through|deep dive|in detail|documentation|open (the )?project)\b/i.test(t)
-    && /\b(tell me about|explain|describe|what is|what's)\b/i.test(t)
-    && /\b(queryforge|reporadar|placement)\b/i.test(t)) {
+    && /\b(tell me about|explain|describe|what is|what'?s)\b/i.test(t)
+    && /queryforge|reporadar|placement/i.test(t)) {
     return { strategy: 'Summarize', task: 'project_overview' };
+  }
+
+  if (/how (was|is|did) .{0,40}(built|designed|architect)/i.test(t)
+    || (/how (was|is) .+ built/i.test(t) && /queryforge|reporadar|placement/i.test(t))) {
+    return { strategy: 'Explain', task: 'arch_why' };
   }
 
   if (/tell me about sudhanshu|who is sudhanshu|what'?s this portfolio|about this portfolio|portfolio about|introduce sudhanshu/i.test(t)
@@ -417,11 +462,16 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Justify', task: 'why_hire' };
   }
 
-  if (/tell me about|what is|explain (queryforge|placement|reporadar)/i.test(t)) {
-    return { strategy: 'Describe', task: null };
+  if (/tell me about|what is|explain (queryforge|placement|reporadar)/i.test(t) && /queryforge|reporadar|placement/i.test(t)) {
+    return { strategy: 'Summarize', task: 'project_overview' };
   }
 
   return { strategy: 'Describe', task: null };
+}
+
+function entitiesHasBrand(ctx) {
+  const list = ctx?.entities?.entities || [];
+  return list.some((e) => e.type === 'brand' || /sriiverse/i.test(String(e.canonical || '')));
 }
 
 export function mayOverrideDecline(task) {
@@ -502,6 +552,15 @@ function opCritique(ctx, { mode }) {
   const strengths = getIdentityClaimsByFacet('strengths', ctx.identity);
 
   if (mode === 'learn_next') {
+    const q = String(ctx.query || '').toLowerCase();
+    if (/\bi learn|should i learn|build systems like this|like (him|sudhanshu|this)\b/i.test(q)) {
+      return speak(
+        ctx.strategy,
+        `If you want to build systems like these, learn in this order: solid Python services and REST APIs, then a real database (schema + query plans), then how to ground an LLM in actual inputs, then enough frontend to ship the product.`,
+        `That path mirrors what's evidenced across QueryForgeAI, Placement Pro+, and RepoRadarAI — backend ownership first, AI as a reasoning layer, full product finish.`,
+        `I won't invent a secret curriculum beyond what the portfolio shows. Pick a layer and I can point at the project that teaches it best.`,
+      );
+    }
     return speak(
       ctx.strategy,
       `If I keep sharpening the public signal, I'd start with clearer data-store pinning, more async/API-first depth, and stronger observability storytelling.`,
@@ -886,10 +945,55 @@ function opSummarize(ctx, { task }) {
         `You see that pattern on ${nm(ctx.byId('queryforge'))}, ${nm(ctx.byId('placementpro'))}, and ${nm(ctx.byId('reporadar'))}.`,
       ].join('\n\n');
     }
+    // Describe Sudhanshu briefly — answer the ask, no contact/nav dump
+    if (/sudhanshu|30.?second|60.?second|elevator|describe/i.test(q)) {
+      return [
+        `Sudhanshu is a backend-first engineer who likes turning messy real-world problems into intelligent software.`,
+        `Python is usually his backend spine, but he works across AI, APIs, databases, and the frontend when the product needs it.`,
+        `His projects are less about showcasing technologies and more about making those technologies work together to solve something real — ${ctx.profiles.map(nm).join(', ')} are the live proof.`,
+      ].join(' ');
+    }
     return [
-      `I'm ${ctx.identity.subject?.name || 'Sudhanshu Sinha'} — ${ctx.identity.subject?.title || 'Python backend / AI engineer'}.`,
-      `I ship live AI products: ${ctx.profiles.map(nm).join(', ')}.`,
-      `Strongest proof: open a demo, then ask me about architecture or trade-offs.`,
+      `Sudhanshu Sinha — ${ctx.identity.subject?.title || 'Python backend / AI engineer'}.`,
+      `He ships live AI products: ${ctx.profiles.map(nm).join(', ')}.`,
+      `If you want proof fast, open a demo; if you want depth, ask why an architecture call was made.`,
+    ].join('\n\n');
+  }
+
+  if (task === 'beyond_resume') {
+    const lean = prefs.find((c) => /backend-leaning|full-stack|Python/i.test(c.statement));
+    const ai = philosophy.find((c) => /reasoning layer/i.test(c.statement));
+    const ship = philosophy.find((c) => /Ship working production|slideware/i.test(c.statement));
+    return [
+      `Beyond a resume line, Sudhanshu is the kind of engineer who thinks in systems — not feature checklists.`,
+      `${lean?.statement || 'Center of gravity: Python backend + applied AI, with enough frontend to finish the product.'}`,
+      `${ai?.statement || 'AI shows up as a reasoning layer over real inputs — schemas, resumes, repositories — not as decoration.'}`,
+      `${ship?.statement || 'The portfolio bias is toward shipping live products you can click, not slideware.'}`,
+      `What makes the work interesting is that each product solves a concrete mess (SQL pain, placement prep chaos, opaque repos) with a clear architecture spine shared across ${ctx.profiles.map(nm).join(', ')}.`,
+    ].filter(Boolean).join('\n\n');
+  }
+
+  if (task === 'brand_explain') {
+    return [
+      `SRIIVERSEAI is Sudhanshu's engineering universe — the portfolio environment where his work, AI systems, architecture, and technical thinking live together.`,
+      `It is not just another project card, and it is not a skill in a taxonomy. It is the place those shipped systems (${ctx.profiles.map(nm).join(', ')}) and the judgment behind them become explorable.`,
+      `I'm the Digital Brain inside that universe: I help you understand the person and the engineering, without inventing what isn't documented.`,
+    ].join('\n\n');
+  }
+
+  if (task === 'role_triad') {
+    return [
+      `Sudhanshu is the engineer who builds.`,
+      `SRIIVERSEAI is the engineering universe where that work lives — projects, architecture, experiments, and technical judgment together.`,
+      `I'm the Digital Brain inside SRIIVERSEAI: the intelligence layer that helps you explore both. I'm not Sudhanshu the person, and I'm not a fourth product competing with QueryForge or RepoRadar.`,
+    ].join('\n\n');
+  }
+
+  if (task === 'honest_unknown') {
+    return [
+      `Plenty — and I should say so plainly.`,
+      `I don't have formal education details, certifications, salary expectations, employer history outside this portfolio, or private motivations that aren't evidenced in the shipped work.`,
+      `I also won't invent personality traits or metrics that aren't documented. If you ask about something outside the portfolio, I'll tell you it's not here rather than guess.`,
     ].join('\n\n');
   }
 
@@ -922,30 +1026,29 @@ function opSummarize(ctx, { task }) {
 
   if (task === 'identity') {
     return [
-      `I'm SRIIVERSE AI — ${subject?.name || 'Sudhanshu Sinha'}'s digital engineering brain.`,
-      `I can walk you through his shipped work the way he would: projects, architecture calls, stack trade-offs, and where the portfolio is honest about gaps.`,
-      `Ask me what to look at first, why a decision was made, or open a live demo — I'll stay inside what's actually evidenced.`,
-    ].join('\n\n');
-  }
-
-  if (task === 'about_sudhanshu') {
-    return [
-      `I'm ${subject?.name || 'Sudhanshu Sinha'} — a ${subject?.title || 'software engineer'}. ${subject?.tagline || ''}`.trim(),
-      `I ship intelligent systems end to end: ${ctx.profiles.map(nm).join(', ')} — all live, sharing a five-layer architecture where AI reasons over real data.`,
-      prefs.find((c) => /backend-leaning|Python/i.test(c.statement))?.statement
-        || 'Center of gravity: Python backend + applied AI, with enough frontend to finish the product.',
+      `I'm the Digital Brain of SRIIVERSEAI — Sudhanshu Sinha's engineering universe.`,
+      `I can walk you through his shipped work the way an engineer would: projects as systems, architecture calls, stack trade-offs, and where the portfolio is honest about gaps.`,
+      `Ask about a project, how something was built, or who Sudhanshu is beyond a resume line — I'll stay inside what's actually evidenced.`,
     ].join('\n\n');
   }
 
   if (task === 'portfolio_different') {
     const ship = philosophy.find((c) => /Ship working production|slideware/i.test(c.statement));
     const ai = philosophy.find((c) => /reasoning layer/i.test(c.statement));
-    return speak(
-      ctx.strategy,
-      `What makes this portfolio memorable is that I ship three live AI systems under one architectural philosophy — not a list of screenshots.`,
-      `${ai?.statement || ''} ${ship?.statement || ''}`.trim(),
-      `You can click demos. That's the difference.`,
-    );
+    return [
+      `A typical portfolio is a gallery of cards. SRIIVERSEAI is closer to an engineering environment — live systems, shared architecture, and a Digital Brain that can reason about the work.`,
+      `${ai?.statement || 'AI is treated as a reasoning layer over real data.'} ${ship?.statement || 'The bias is toward shipping production software, not screenshots.'}`.trim(),
+      `You can click demos, then ask why a decision was made. That's the difference.`,
+    ].join('\n\n');
+  }
+
+  if (task === 'about_sudhanshu') {
+    return [
+      `${subject?.name || 'Sudhanshu Sinha'} is a ${subject?.title || 'software engineer'}. ${subject?.tagline || ''}`.trim(),
+      `He ships intelligent systems end to end: ${ctx.profiles.map(nm).join(', ')} — all live, sharing a five-layer architecture where AI reasons over real data.`,
+      prefs.find((c) => /backend-leaning|Python/i.test(c.statement))?.statement
+        || 'Center of gravity: Python backend + applied AI, with enough frontend to finish the product.',
+    ].join('\n\n');
   }
 
   if (task === 'tech_frequency') {
@@ -968,12 +1071,11 @@ function opSummarize(ctx, { task }) {
 
   if (task === 'engineer_type') {
     const lean = prefs.find((c) => /backend-leaning|full-stack/i.test(c.statement));
-    return speak(
-      ctx.strategy,
-      `I'm a backend-leaning full-stack engineer with applied AI as a product skill — matching ${subject?.title || 'my documented title'}.`,
-      lean?.statement || "I'm not a research scientist, and I'm not a pure frontend specialist.",
-      `I build Python services, wire AI into real workflows, and ship the UI when the product needs it.`,
-    );
+    return [
+      `Sudhanshu specializes as a backend-leaning full-stack engineer with applied AI as a product skill — matching ${subject?.title || 'his documented title'}.`,
+      lean?.statement || 'Python/AI core with React (or JS) surfaces where the product needs a serious UI.',
+      `He builds Python services, wires AI into real workflows, and ships the UI when the product needs it — evidenced across ${ctx.profiles.map(nm).join(', ')}.`,
+    ].join('\n\n');
   }
 
   if (task === 'strengths') {
@@ -1065,7 +1167,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   };
 
   // --- Summarize / identity ---
-  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap'].includes(task)) {
+  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown'].includes(task)) {
     if (task === 'preference_gap') return opConversationMode(opCtx, { task });
     return opSummarize(opCtx, { task });
   }

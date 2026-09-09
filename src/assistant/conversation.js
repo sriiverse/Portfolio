@@ -54,7 +54,7 @@ import { matchTaxonomyEntities } from './entities.js';
 
 const GREETING_RE = /^(hi+|hey+|hello+|yo|sup|howdy|greetings|good\s+(morning|afternoon|evening))\b/i;
 
-const IDENTITY_RE = /\b(who are you|what are you|introduce yourself|what is sriiverse\s*ai|what can you do|what do you do)\b/i;
+const IDENTITY_RE = /\b(who are you|what are you|introduce yourself|what is sriiverse\s*ai|what is sriiverseai|what can you do|what do you do|are you sudhanshu|are you (sriiverse\s*ai|sriiverseai)|your role (inside|in)|what (is|are) your role)\b/i;
 
 const COMPARISON_RE = /\bcompare\b|\bvs\.?\b|\bversus\b|\bdifference between\b/i;
 
@@ -113,7 +113,7 @@ const RESUME_RE = /\b(resume|cv|background)\b|summariz.*(experience|background)|
 // check #6 ever runs) while second-person "your background" skipped this
 // regex entirely and fell through to RESUME_RE — a second/third-person
 // parity break, not a real Identity/Experience distinction.
-const PROFILE_IDENTITY_RE = /\b(who is sudhanshu|tell me about (him|sudhanshu)|introduce (him|sudhanshu)|about (him|sudhanshu))\b/i;
+const PROFILE_IDENTITY_RE = /\b(who is sudhanshu|tell me about (him|sudhanshu)|introduce (him|sudhanshu)|about (him|sudhanshu)|beyond (his |the )?resume|person behind|kind of engineer|what (kind|type) of engineer|what does (he|sudhanshu) (care|specialize)|describe sudhanshu)\b/i;
 const LIMITATION_RE = /\b(weakness|weaknesses|bad at|not good at|limitation|can(?:'t| not) (you|he) do|struggle(s)? with|biggest weakness|improve on|room for improvement)\b/i;
 const CAREER_RE = /\b(career\s+(goal|goals|path)|where (do you|does he) see (yourself|himself)|why (did|do) (you|he) (become|want to be)|(five|5).?year (plan|goal)|long.term (goal|plan)|in (five|5) years)\b/i;
 const BEHAVIORAL_RE = /\b(tell me about a time|describe a time|how do(?:es)? (you|he) handle|how do(?:es)? (you|he) prioritize|what motivates (you|him))\b/i;
@@ -171,8 +171,19 @@ export function classifyConversationMode(query) {
   }
 
   // brief — timed / scoped asks must not dump chronology or brochure
-  if (/\b(60.?seconds?|elevator pitch|in (one|1) minute|three talking points|tl;?dr|plain english)\b/i.test(t)) {
+  if (/\b(60.?seconds?|30.?seconds?|elevator pitch|in (one|1) minute|three talking points|tl;?dr|plain english|describe sudhanshu in)\b/i.test(t)) {
     return 'brief';
+  }
+
+  // beyond_resume — person/engineer synthesis, not CV dump
+  // (exclude "kind/type of engineer" — that is engineer_type specialization)
+  if (/\b(beyond (his |the |what'?s (on |written on )?)?resume|person behind|meeting the person|don'?t want to see .{0,24}resume|how does he approach|what does he care about|what makes (his )?projects interesting)\b/i.test(t)) {
+    return 'beyond_resume';
+  }
+
+  // brand — SRIIVERSEAI as universe/environment (not a skill check)
+  if (/\b(what is sriiverse\s*ai|what is sriiverseai|sriiverse\s*ai (different|vs|versus)|different from a typical portfolio|role inside (it|sriiverse)|what do you (actually )?know about sriiverse)\b/i.test(t)) {
+    return 'brand';
   }
 
   // intro — conversational self-introduction (never Unknown/fallback)
@@ -185,12 +196,26 @@ export function classifyConversationMode(query) {
 
 /**
  * V4.5 Mod 2 — follow-up shapes that must inherit the prior commitment.
+ * Expanded so short "How?" / "Why?" / improve probes stay on the bound project.
  */
 export function isBoundFollowUpQuery(query) {
-  const t = String(query || '').trim().toLowerCase();
+  const raw = String(query || '').trim();
+  // Strip trailing project names so enrichment doesn't break ^...$ patterns
+  const t = raw
+    .replace(/\b(queryforgeai|queryforge|reporadarai|reporadar|placement pro\+?|placementpro)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
   if (!t) return false;
   if (/\bwhy that one\b|\bwhy this one\b|\bwhy that\b|\bwhy this\??\s*$/i.test(t)) return true;
   if (/^(and )?why\??$/i.test(t)) return true;
+  if (/^(and )?how\??$/i.test(t)) return true;
+  if (/^how (does|did|do|is|was) (it|that|this|the architecture)\b/i.test(t)) return true;
+  if (/^how does it work\??$/i.test(t)) return true;
+  if (/^why (that |this )?(architecture|stack|design|choice)\??$/i.test(t)) return true;
+  if (/^what (database|db|stack|frontend|backend) does it use\??$/i.test(t)) return true;
+  if (/^what would you (improve|change|rebuild)\??$/i.test(t)) return true;
+  if (/^why did (he|sudhanshu|you) (choose|build|make)\b/i.test(t) && t.length < 80) return true;
   if (/\bso why did\b|\bwhy (did|does|would).{0,40}\bkeep\b/i.test(t)) return true;
   if (/\bwhat was the hardest\b|\bhardest part\b/i.test(t)) return true;
   if (/\bwhy flask\b|\bkeep flask\b|\bkept flask\b/i.test(t) && !/queryforge|reporadar|placement/i.test(t)) return true;
@@ -201,7 +226,7 @@ export function isBoundFollowUpQuery(query) {
 // Resolves WHO the question is fundamentally about, once, before any
 // questionType check below runs — the fix for Cluster A ("second-person-
 // only pattern matching"). Unchanged from Phase 1.
-const ASSISTANT_SUBJECT_RE = /\b(who are you|what are you|are you (real|human|sentient|alive|an? (ai|bot|assistant|chatbot|human))|introduce yourself|what is sriiverse\s*ai|what can you do|what do you do|do you remember|can you access|the assistant('s)?|this (ai|bot|chatbot)('s)?)\b/i;
+const ASSISTANT_SUBJECT_RE = /\b(who are you|what are you|are you (real|human|sentient|alive|an? (ai|bot|assistant|chatbot|human)|sudhanshu|sriiverse\s*ai|sriiverseai)|introduce yourself|what is sriiverse\s*ai|what is sriiverseai|what can you do|what do you do|do you remember|can you access|the assistant('s)?|this (ai|bot|chatbot)('s)?|your role (inside|in)|what do you (actually )?know about sriiverse)\b/i;
 const OTHER_PERSON_SIGNAL_RE = /\b(the (ceo|manager|recruiter|interviewer|hiring manager|founder)|my (manager|boss|team|company|colleague)|your (company|team|manager))\b/i;
 
 /**

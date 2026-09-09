@@ -697,25 +697,28 @@ const LocalProvider = {
   },
 
   _profileResponse(doc, ctx) {
+    const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
+    const wantsContact = /\b(contact|email|reach|linkedin|get in touch)\b/i.test(q);
+    const brief = /\b(30.?second|60.?second|brief|beyond|person behind)\b/i.test(q);
+
+    if (brief) {
+      const text = [
+        `Sudhanshu is a backend-first engineer who turns messy real-world problems into intelligent software.`,
+        `Python is usually his backend spine; he crosses AI, APIs, databases, and frontend when the product needs it.`,
+        `The work is about systems that solve something real — not technology showcases.`,
+      ].join(' ');
+      return { text, sources: [doc], kind: 'text', payload: null };
+    }
+
     const text = [
-      `## Sudhanshu Sinha`,
-      `**Python Backend Engineer · AI Developer · Full-Stack Engineer**`,
+      `Sudhanshu Sinha is a **Python Backend Engineer · AI Developer · Full-Stack Engineer**.`,
       ``,
-      `SRIIVERSEAI is his engineering practice — the philosophy that intelligent software should solve real problems, not just demonstrate technology.`,
+      `SRIIVERSEAI is his engineering universe — the environment where intelligent software that solves real problems lives, not just a project card.`,
       ``,
-      `### What He Builds`,
-      `- **AI-powered products** — LLMs as product features, not demos`,
-      `- **Scalable backend systems** — Python services built for correctness`,
-      `- **Modern web applications** — end-to-end, from API to interface`,
-      ``,
-      `### How He Thinks`,
-      `Every system follows a deliberate architecture: Frontend → Backend → AI Layer → Database → Deployment. The AI is always a reasoning layer over real data.`,
-      ``,
-      `### Three Live Systems`,
-      getAllProjects().map((p) => `- **${p.name}** — ${p.tagline}`).join('\n'),
-      ``,
-      `📧 ${getProfile().email} · GitHub ${getProfile().githubHandle}`,
-    ].join('\n');
+      `He builds AI-powered products, scalable backends, and modern web apps, with a bias toward shipping live systems and treating AI as a reasoning layer over real data.`,
+      wantsContact ? `` : null,
+      wantsContact ? `📧 ${getProfile().email} · GitHub ${getProfile().githubHandle}` : null,
+    ].filter((line) => line != null).join('\n');
 
     return { text, sources: [doc], kind: 'text', payload: null };
   },
@@ -1294,6 +1297,17 @@ const LocalProvider = {
    */
   _inviteFor(plan, ctx, move) {
     const qType = ctx?.questionFrame?.questionType;
+    const mode = ctx?.questionFrame?.conversationMode;
+    const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
+    // Don't bolt navigation/CTAs onto short identity / brand / beyond-resume answers
+    if (mode === 'brief' || mode === 'beyond_resume' || mode === 'brand'
+      || /\b(30.?second|beyond|what is sriiverse|are you sudhanshu|don'?t know)\b/i.test(q)) {
+      return null;
+    }
+    if (qType === 'Greeting' || qType === 'Identity') {
+      return null;
+    }
+
     const blocks = plan?.blocks || [];
     const hasComparison = blocks.some((b) => b.type === 'Comparison');
     const hasProjectCard = blocks.some((b) => b.type === 'Evidence') && this._resolveSingleProjectFromFacts(
@@ -1769,6 +1783,10 @@ const LocalProvider = {
       spoken = DIGITAL_BRAIN.connectivity;
     } else if (aspect === 'memory' || text === SELF_MODEL.memory || text === DIGITAL_BRAIN.memory) {
       spoken = DIGITAL_BRAIN.memory;
+    } else if (aspect === 'triad' || text === SELF_MODEL.triad || text === DIGITAL_BRAIN.triad) {
+      spoken = DIGITAL_BRAIN.triad;
+    } else if (aspect === 'universe' || text === SELF_MODEL.universe || text === DIGITAL_BRAIN.universe) {
+      spoken = DIGITAL_BRAIN.universe;
     }
     return { fragment: spoken, sourcesForBlock: [] };
   },

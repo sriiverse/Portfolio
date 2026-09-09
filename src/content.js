@@ -197,8 +197,16 @@ export const STATS = [
  */
 export const ASSISTANT_KB = [
   {
-    q: ['who is sudhanshu', 'who is he', 'tell me about sudhanshu', 'about sudhanshu', 'introduction', 'who built', 'founder'],
-    a: 'Sudhanshu Sinha is a software engineer — a Python backend engineer, AI developer and full-stack engineer. He builds intelligent software that solves real problems: AI-powered products, scalable backend systems and modern web applications. SRIIVERSEAI is his engineering practice.',
+    q: ['who is sudhanshu', 'who is he', 'tell me about sudhanshu', 'about sudhanshu', 'introduction', 'who built', 'founder', 'beyond resume', 'kind of engineer'],
+    a: 'Sudhanshu Sinha is a software engineer — a Python backend engineer, AI developer and full-stack engineer. He builds intelligent software that solves real problems: AI-powered products, scalable backend systems and modern web applications. Beyond a resume, he thinks in systems — shipping live products where AI reasons over real data.',
+  },
+  {
+    q: ['sriiverseai', 'sriiverse ai', 'what is sriiverse', 'engineering universe', 'typical portfolio'],
+    a: 'SRIIVERSEAI is Sudhanshu Sinha\'s engineering universe and portfolio environment — not merely another project or a skill-list entry. It is where his shipped AI products, backend architecture, full-stack systems, experiments, and engineering judgment come together. The Digital Brain is the intelligence layer that helps visitors explore that universe.',
+  },
+  {
+    q: ['digital brain', 'who are you', 'are you sudhanshu', 'your role'],
+    a: 'I am the Digital Brain of SRIIVERSEAI. Sudhanshu is the engineer who builds; SRIIVERSEAI is the universe where that work lives; I am the interface that helps you explore both. I am not Sudhanshu the person, and I am not a fourth product card.',
   },
   {
     q: ['queryforge', 'sql', 'database assistant', 'query optim'],
@@ -213,15 +221,15 @@ export const ASSISTANT_KB = [
     a: 'RepoRadarAI is an AI-powered GitHub repository intelligence platform. Point it at any public repo and it generates architecture insights, auto-documentation, a repository summary, commit heatmaps, PR velocity, contributor distribution and a health score. Open source: github.com/sriiverse/RepoRadar. Live: repoai.sriiverseai.vercel.app',
   },
   {
-    q: ['technology', 'technologies', 'stack', 'tech', 'tools', 'what does he know', 'skills', 'languages'],
-    a: 'Core stack: Python, Flask, FastAPI (backend); React, TypeScript, JavaScript, TailwindCSS (frontend); PostgreSQL, MongoDB (data); Docker, Git, GitHub, JWT, REST APIs; AI tooling with LLMs and Ollama; deployed on Vercel, Netlify and Render.',
+    q: ['technology', 'technologies', 'stack', 'tech', 'tools', 'what does he know', 'skills', 'languages', 'specialize'],
+    a: 'Core stack: Python, Flask, FastAPI (backend); React, TypeScript, JavaScript, TailwindCSS (frontend); PostgreSQL, MongoDB (data); Docker, Git, GitHub, JWT, REST APIs; AI tooling with LLMs and Ollama; deployed on Vercel, Netlify and Render. Specialization leans backend + applied AI.',
   },
   {
     q: ['backend', 'server', 'api', 'backend project', 'show backend'],
     a: 'Backend engineering is the core. Sudhanshu builds Python services with Flask and FastAPI — REST APIs, JWT auth, business logic and data modelling. QueryForgeAI and Placement Pro+ are both Python-backend-driven; RepoRadarAI uses FastAPI behind a React frontend.',
   },
   {
-    q: ['architecture', 'system design', 'how does it work', 'explain the architecture', 'how is it built'],
+    q: ['architecture', 'system design', 'how does it work', 'explain the architecture', 'how is it built', 'five-layer'],
     a: 'Every system follows a five-layer topology: Frontend (React/TS) → Backend (Python/Flask/FastAPI) → AI Layer (LLMs/Ollama/retrieval) → Database (PostgreSQL/MongoDB) → Deployment (Docker/Vercel/Netlify). The AI is a reasoning layer over real data — never a blind generator.',
   },
   {

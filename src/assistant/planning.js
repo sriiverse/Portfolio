@@ -118,11 +118,15 @@ function followupHintBlock(questionFrame, entities) {
 // aspect answers a `subject: 'assistant'` question most directly.
 const MEMORY_ASPECT_RE = /\b(remember|memory|forget|recall|session)\b/i;
 const CONNECTIVITY_ASPECT_RE = /\b(api|internet|online|connect|network|external|call\s+(out|another)|gpt|openai|cloud|hosted)\b/i;
+const TRIAD_ASPECT_RE = /\b(are you sudhanshu|sudhanshu.? sriiverse|sriiverse.? or|or something else|your role|who\/what are you)\b/i;
+const UNIVERSE_ASPECT_RE = /\b(what is sriiverse|what is sriiverseai|sriiverse\s*ai|engineering universe|typical portfolio)\b/i;
 
 function detectSelfModelAspect(rawQuery) {
   const q = String(rawQuery || '');
   if (MEMORY_ASPECT_RE.test(q)) return 'memory';
   if (CONNECTIVITY_ASPECT_RE.test(q)) return 'connectivity';
+  if (TRIAD_ASPECT_RE.test(q)) return 'triad';
+  if (UNIVERSE_ASPECT_RE.test(q)) return 'universe';
   return 'nature';
 }
 
@@ -251,7 +255,7 @@ export function buildResponsePlan(questionFrame, entities, evidence, confidence)
   // that must not suppress the warm greeting response.
   if (questionFrame?.questionType === 'Greeting') {
     return finish([
-      directAnswer("Hello! Ask me anything about Sudhanshu's projects, skills, or experience.", 'neutral'),
+      directAnswer("Hey — I'm the Digital Brain of SRIIVERSEAI. Ask about Sudhanshu as an engineer, a project, or how a system is built.", 'neutral'),
       followupHintBlock(questionFrame, entities),
     ]);
   }
@@ -298,8 +302,14 @@ export function buildResponsePlan(questionFrame, entities, evidence, confidence)
   }
 
   // 7. A single dominant entity — ownership decides polarity/block choice.
-  // V4.5 Mod 3: gap/unknown → GapDisclosure once (no duplicate DirectAnswer).
+  // Brand is never a skill-gap; leave synthesis to reasoning.
   if (primary) {
+    if (primary.type === 'brand') {
+      return finish([
+        directAnswer('', 'neutral'),
+        followupHintBlock(questionFrame, entities),
+      ]);
+    }
     if (primary.type === 'tech' && (primary.ownership === 'gap' || primary.ownership === 'unknown')) {
       const note = gapNotes[0] || `There's no record of ${primary.canonical} in Sudhanshu's documented skill set.`;
       return finish([
@@ -311,24 +321,26 @@ export function buildResponsePlan(questionFrame, entities, evidence, confidence)
     // V4.5 Mod 5 — "Yes — shipped…" only for ownership yes/no checks
     const ownershipYesNo = questionFrame?.questionType === 'SkillVerification'
       || /^(do you|does he|are you|is he|have you|has he|can you|can he)\b/i.test(String(questionFrame?.rawQuery || '').trim());
-    const text = ownershipYesNo
-      ? (primary.type === 'project'
-        ? `Yes — ${label} is one of Sudhanshu's shipped projects.`
-        : `Yes — ${label} is part of Sudhanshu's shipped stack.`)
-      : (primary.type === 'project'
-        ? `${label} is one of the shipped projects.`
-        : `${label} shows up in the shipped stack.`);
-    const blocks = [directAnswer(text, ownershipYesNo ? 'affirmative' : 'neutral')];
-    if (primaryFacts.length) blocks.push(evidenceBlock(primaryFacts));
-    blocks.push(followupHintBlock(questionFrame, entities));
-    return finish(blocks);
+    // Prefer empty DirectAnswer so reasoning synthesizes; keep thin affirm only for yes/no
+    if (!ownershipYesNo) {
+      return finish([
+        directAnswer('', 'neutral'),
+        followupHintBlock(questionFrame, entities),
+      ]);
+    }
+    const text = primary.type === 'project'
+      ? `Yes — ${label} is one of Sudhanshu's shipped projects.`
+      : `Yes — ${label} is part of Sudhanshu's shipped stack.`;
+    return finish([
+      directAnswer(text, 'affirmative'),
+      followupHintBlock(questionFrame, entities),
+    ]);
   }
 
-  // 8. No dominant entity — generic, evidence-grounded fallback.
+  // 8. No dominant entity — leave room for reasoning synthesis (no KB dump lead).
   if (supportingDocs.length) {
     return finish([
-      directAnswer('Based on what is documented:', 'neutral'),
-      evidenceBlock(primaryFacts.length ? primaryFacts : [{ text: supportingDocs[0].doc.text, docId: supportingDocs[0].doc.id, link: supportingDocs[0].doc.link || null }]),
+      directAnswer('', 'neutral'),
       followupHintBlock(questionFrame, entities),
     ]);
   }

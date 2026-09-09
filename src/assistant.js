@@ -202,7 +202,8 @@ function resolveContext(query, intent) {
 
   // Pronoun / follow-up resolution: rewrite query with project name for retrieval
   const needsRef = /\b(it|that|this|its|second|third|first|one|both|other|next)\b/i.test(query)
-    || isBoundFollowUpQuery(query);
+    || isBoundFollowUpQuery(query)
+    || (/^(how|why|what)\b/i.test(String(query || '').trim()) && String(query || '').trim().split(/\s+/).length <= 8 && focusProject);
   let enrichedQuery = query;
   if (needsRef && focusProject) {
     const proj = knowledge.getProject(focusProject);
@@ -242,23 +243,30 @@ function buildFollowups(intent, payload, focusProject, questionFrame) {
   // intercepts the moves that don't already have a good intent-based case
   // (e.g. project-scoped 'comparison' still falls through to the switch).
   if (questionFrame?.move === 'greeting') {
-    f.push('Who are you?', 'Show me his projects', 'Why hire him?');
+    f.push('Who is Sudhanshu beyond his resume?', 'What is SRIIVERSEAI?', 'Tell me about QueryForgeAI');
   } else if (questionFrame?.move === 'identity') {
-    f.push('Show me his projects', 'Why hire him?', 'Explain the architecture');
+    f.push('What is SRIIVERSEAI?', 'Tell me about QueryForgeAI');
+  } else if (questionFrame?.conversationMode === 'brief' || questionFrame?.conversationMode === 'beyond_resume') {
+    f.push('Tell me about QueryForgeAI', 'How does he approach architecture?');
+  } else if (questionFrame?.conversationMode === 'brand') {
+    f.push('Are you Sudhanshu, SRIIVERSEAI, or something else?', 'Tell me about QueryForgeAI');
   } else if (questionFrame?.move === 'opinion' || (questionFrame?.move === 'comparison' && questionFrame.scope === 'tech')) {
     f.push('What technologies does he know?', 'Compare his projects');
   } else if (questionFrame?.move === 'experience') {
     f.push('Paste a job description to match', 'Show me his projects');
   }
 
-  // Recruiter-specific follow-ups
+  // Recruiter-specific follow-ups — only when no smarter set already chose
   if (f.length) {
     // questionFrame-aware suggestions above already decided this turn's followups
   } else if (profile.type === 'recruiter') {
     f.push('Why hire Sudhanshu for my team?');
     if (proj) f.push(`Open the ${proj.name} live demo`);
     else f.push('Show me the most impressive project');
-    f.push('Open contact section');
+    // Contact only when hiring/contact intent is active
+    if (/\b(hire|contact|reach|email)\b/i.test(String(questionFrame?.rawQuery || ''))) {
+      f.push('Open contact section');
+    }
   } else if (profile.type === 'engineer') {
     // Engineer follow-ups
     if (proj) {

@@ -297,19 +297,13 @@ export function runProactiveTool(intent, focusProject, knowledge) {
     return;
   }
 
-  // Intent-based proactive navigation
+  // Intent-based proactive navigation — avoid contact/about hijacks on every chat
   switch (intent) {
     case 'architecture':
       delay(600, () => scrollToId('architecture'));
       break;
     case 'stack':
       delay(600, () => scrollToId('stack'));
-      break;
-    case 'recruiter':
-      delay(800, () => scrollToId('contact'));
-      break;
-    case 'profile':
-      delay(600, () => scrollToId('about'));
       break;
     default:
       break;

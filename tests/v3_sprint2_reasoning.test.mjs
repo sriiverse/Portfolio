@@ -76,7 +76,7 @@ const CASES = [
   { id: 'H01', q: 'Does he know Kubernetes?', strategy: 'Describe', task: null, must: [/Kubernetes|not part/i], noIntel: true },
   { id: 'H02', q: 'Hi', strategy: null, task: null, must: [/SRIIVERSE|Hi|Hey/i], move: 'Greeting' },
   { id: 'H03', q: 'Compare Flask and FastAPI', strategy: 'Compare', task: 'compare_passthrough', must: [/Flask|FastAPI/i], noIntel: true },
-  { id: 'H04', q: 'Tell me about QueryForgeAI', strategy: 'Describe', task: null, must: [/QueryForge/i] },
+  { id: 'H04', q: 'Tell me about QueryForgeAI', strategy: 'Summarize', task: 'project_overview', must: [/QueryForge/i] },
   { id: 'H05', q: 'what does your manager think about this', strategy: null, task: null, must: [/not sure|clarif/i], move: 'Clarify' },
 ];
 

@@ -52,11 +52,25 @@ const COMMON_CAPITALIZED_WORDS = new Set([
   'what', 'who', 'when', 'where', 'why', 'how', 'which',
   'can', 'could', 'would', 'should', 'will',
   'tell', 'show', 'explain', 'describe', 'compare', 'give', 'walk',
-  'sudhanshu', 'sriiverse',
+  'sudhanshu', 'sriiverse', 'sriiverseai', 'sriiverse-ai',
+  // Brand / site tokens — never treat as missing skills
+  'digital', 'brain',
+  // Common English / discourse mistaken for unknown tech
+  'talk', 'im', 'i\'m', 'dont', 'don\'t', 'want', 'see', 'meeting', 'person',
+  'behind', 'projects', 'project', 'written', 'resume', 'something', 'else',
+  'actually', 'know', 'about', 'does', 'sudhanshus',
   // V4.5 Mod 1 — verbs / discourse tokens mistaken for unknown tech
   'defend', 'concede', 'criticize', 'criticise', 'convince', 'rebuild',
   'ai', 'api', 'mvp', 'rag', 'llm', 'llms', 'ux', 'ui', 'cto', 'phd',
 ]);
+
+/** Portfolio brand aliases — owned environment, not a STACK skill. */
+const BRAND_ALIASES = [
+  'sriiverseai',
+  'sriiverse ai',
+  'sriiverse-ai',
+  'sriiverse',
+];
 
 function normalize(text) {
   return String(text || '').slice(0, MAX_SCAN_LENGTH).toLowerCase();
@@ -135,6 +149,27 @@ function resolveProjectEntities(normalizedText) {
 }
 
 /**
+ * Brand / universe entity — SRIIVERSEAI is the portfolio environment, not a STACK skill.
+ * Always owned so gap disclosure never says "no record in skill set."
+ */
+function resolveBrandEntities(normalizedText) {
+  for (const alias of BRAND_ALIASES) {
+    if (!containsAlias(normalizedText, alias) && !normalizedText.includes(alias.replace(/\s+/g, ''))) {
+      continue;
+    }
+    return [{
+      type: 'brand',
+      canonical: 'SRIIVERSEAI',
+      surfaceForm: 'SRIIVERSEAI',
+      ownership: 'owned',
+      confidence: 'high',
+      source: 'brand',
+    }];
+  }
+  return [];
+}
+
+/**
  * Conservative heuristic for a plausible-but-untracked technology name
  * (e.g. "Go", "Rust", "Terraform") — a capitalized token in the ORIGINAL
  * (not lowercased) query that isn't a common question word and isn't
@@ -163,6 +198,14 @@ function resolveUnrecognizedTechMentions(rawQuery, alreadyFound) {
     if (clean.length < 2 || !/^[A-Z]/.test(clean)) return;
     const lower = clean.toLowerCase();
     if (COMMON_CAPITALIZED_WORDS.has(lower) || alreadyMatchedWords.has(lower) || seen.has(lower)) return;
+    // Skip tokens that are prefixes/contained in already-matched project/brand names
+    let covered = false;
+    for (const known of alreadyMatchedWords) {
+      if (known.includes(lower) || lower.includes(known)) { covered = true; break; }
+    }
+    if (covered) return;
+    // Possessive / pluralized person name fragments
+    if (/^sudhanshu/.test(lower)) return;
     seen.add(lower);
     found.push({
       type: 'tech',
@@ -201,6 +244,7 @@ export function resolveEntities(query, { hint } = {}) { // eslint-disable-line n
   const normalizedText = normalize(rawQuery);
 
   const entities = [
+    ...resolveBrandEntities(normalizedText),
     ...resolveTechEntities(normalizedText),
     ...resolveProjectEntities(normalizedText),
   ];

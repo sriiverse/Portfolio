@@ -58,15 +58,37 @@ const docs = [];
 
 function addDoc(doc) { docs.push(doc); }
 
-// Profile
+// Profile — spoken identity facts WITHOUT contact dump (contact lives in its own doc)
 addDoc({
   id: 'profile',
   kind: 'profile',
   title: 'Sudhanshu Sinha — Profile',
-  text: `${PROFILE.name} is a ${PROFILE.title}. ${PROFILE.brand} is his engineering practice. ${PROFILE.tagline} He builds AI-powered products, scalable backend systems and modern web applications. Reach him at ${PROFILE.email}, GitHub ${PROFILE.githubHandle}, or LinkedIn.`,
-  tags: stemSet(`${PROFILE.name} sudhanshu sinha sriiverse about who founder engineer profile background intro introduction`),
+  text: `${PROFILE.name} is a ${PROFILE.title}. ${PROFILE.tagline} He builds AI-powered products, scalable backend systems and modern web applications. Center of gravity: Python backend correctness and applied AI grounded in real data — not slideware demos.`,
+  tags: stemSet(`${PROFILE.name} sudhanshu sinha about who founder engineer profile background intro introduction beyond resume person engineer specialize`),
   source: 'Profile',
   link: '#about',
+});
+
+// SRIIVERSEAI — engineering universe / portfolio environment (not a STACK skill)
+addDoc({
+  id: 'brand-sriiverseai',
+  kind: 'brand',
+  title: 'SRIIVERSEAI — Engineering Universe',
+  text: `SRIIVERSEAI is Sudhanshu Sinha's engineering universe and portfolio environment — not merely another project card or a line item in a skill set. It is the place where his shipped AI products, backend architecture, full-stack systems, experiments, technical knowledge, and engineering judgment come together. Visitors explore that universe through this site and its Digital Brain.`,
+  tags: stemSet('sriiverseai sriiverse ai brand universe portfolio environment practice digital brain different typical portfolio'),
+  source: 'SRIIVERSEAI',
+  link: '#about',
+});
+
+// Contact — only retrieved when the visitor asks how to reach him
+addDoc({
+  id: 'contact',
+  kind: 'contact',
+  title: 'Contact',
+  text: `Reach Sudhanshu at ${PROFILE.email}, GitHub ${PROFILE.githubHandle}, or LinkedIn.`,
+  tags: stemSet('contact email reach github linkedin hire get in touch'),
+  source: 'Contact',
+  link: '#contact',
 });
 
 // Projects — one rich doc per project + sub-docs for deep questions
@@ -231,7 +253,7 @@ function scoreDoc(doc, queryTokens, queryStems) {
   }
 
   // Kind weighting — prefer structured project/profile docs over legacy KB
-  const kindWeight = { profile: 1.1, project: 1.0, 'project-arch': 0.95, recommend: 1.0, stack: 0.9, 'arch-overview': 0.9, arch: 0.8, qa: 0.7 };
+  const kindWeight = { profile: 1.1, brand: 1.25, project: 1.0, 'project-arch': 0.95, recommend: 1.0, stack: 0.9, 'arch-overview': 0.9, arch: 0.8, contact: 0.6, qa: 0.7 };
   score *= (kindWeight[doc.kind] || 0.8);
 
   return score;
@@ -261,7 +283,8 @@ const QUESTION_TYPE_KIND_AFFINITY = {
   SkillVerification: ['stack', 'project-stack', 'project'],
   Recruiter: ['recommend'],
   Recommendation: ['recommend', 'project'],
-  Experience: ['resume', 'project'],
+  Experience: ['resume', 'project', 'profile'],
+  Identity: ['brand', 'profile'],
   EvidenceRequest: ['project', 'project-arch', 'project-stack'],
   Career: ['journey', 'qa'],
   Behavioral: ['qa', 'recommend'],
@@ -315,14 +338,30 @@ export function retrieve(query, limit = 4) {
  * or below the floor — this fallback is a hard requirement per Stage 5's
  * own failure-mode table, not an optimization.
  */
-export function retrieveScoped(query, { limit = 4, entities = [], questionType = null } = {}) { // eslint-disable-line no-unused-vars
+export function retrieveScoped(query, { limit = 4, entities = [], questionType = null } = {}) {
   const queryTokens = tokenize(query);
   const queryStems = new Set(queryTokens.map(stem));
   if (!queryTokens.length) return [];
 
-  const scored = docs.map((doc) => ({ doc, score: scoreDoc(doc, queryTokens, queryStems) }));
+  const qLower = String(query || '').toLowerCase();
+  const wantsContact = /\b(contact|email|reach|linkedin|github handle|get in touch)\b/i.test(qLower);
+  const brandFocus = entities.some((e) => e.type === 'brand')
+    || /\bsriiverse\s*ai\b|\bsriiverseai\b/i.test(qLower);
 
-  const preferredKinds = QUESTION_TYPE_KIND_AFFINITY[questionType];
+  let scored = docs.map((doc) => {
+    let score = scoreDoc(doc, queryTokens, queryStems);
+    if (brandFocus && doc.kind === 'brand') score += 4;
+    if (!wantsContact && doc.kind === 'contact') score = 0;
+    return { doc, score };
+  });
+
+  // Never inject contact blobs unless explicitly asked
+  if (!wantsContact) {
+    scored = scored.filter((r) => r.doc.kind !== 'contact');
+  }
+
+  const preferredKinds = QUESTION_TYPE_KIND_AFFINITY[questionType]
+    || (brandFocus ? ['brand', 'profile'] : null);
   if (preferredKinds) {
     const preferred = scored
       .filter((r) => preferredKinds.includes(r.doc.kind) && r.score > 0.5)
@@ -346,6 +385,10 @@ export function retrieveScoped(query, { limit = 4, entities = [], questionType =
  * confirm it's a real technology, let alone an unused one).
  */
 function gapNoteFor(entity) {
+  // Brand / universe is never a "missing skill"
+  if (entity.type === 'brand' || /sriiverse/i.test(String(entity.canonical || ''))) {
+    return null;
+  }
   if (entity.ownership === 'gap') {
     return `${entity.canonical} is not part of Sudhanshu's shipped project history.`;
   }
@@ -375,7 +418,8 @@ export function buildEvidenceSet(query, questionFrame, entities = []) {
 
   const gapNotes = entities
     .filter((e) => e.ownership === 'gap' || e.ownership === 'unknown')
-    .map(gapNoteFor);
+    .map(gapNoteFor)
+    .filter(Boolean);
 
   const scoreGap = supportingDocs.length >= 2 ? (supportingDocs[0].score - supportingDocs[1].score) : null;
 
