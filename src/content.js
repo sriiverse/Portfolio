@@ -45,17 +45,17 @@ export const PROJECTS = [
       'QueryForgeAI turns natural language into SQL, then dissects execution plans, surfaces bottlenecks and rewrites inefficient queries instantly. It is part query generator, part optimization engine, part always-on database assistant.',
     features: [
       { icon: '💬', title: 'Natural Language → SQL', desc: 'Describe what you want in plain English; get executable SQL.' },
-      { icon: '⚡', title: 'SQL Optimization', desc: 'Dissect execution plans and rewrite inefficient queries automatically.' },
-      { icon: '🔍', title: 'Query Explanation', desc: 'Understand what a query does, step by step, in human terms.' },
-      { icon: '🧬', title: 'Schema Intelligence', desc: 'Reason over the live schema to generate context-aware suggestions.' },
-      { icon: '🗄️', title: 'Database Understanding', desc: 'Interact with relational databases conversationally.' },
-      { icon: '📊', title: 'Animated Visualizations', desc: 'SQL behaviour rendered as live, animated visual feedback.' },
+      { icon: '⚡', title: 'SQL Optimization', desc: 'Analyze pasted SQL/pipelines and surface optimization suggestions.' },
+      { icon: '🔍', title: 'Query Explanation', desc: 'Return an explanation alongside generated or rewritten queries.' },
+      { icon: '🧬', title: 'Schema Context', desc: 'Generator accepts user-provided schema/DDL text as prompt context — not live DB introspection.' },
+      { icon: '🗄️', title: 'Multi-dialect Surface', desc: 'UI dialects include PostgreSQL, MySQL, SQLite, and MongoDB.' },
+      { icon: '📊', title: 'Plan Visualization', desc: 'Optimizer UI renders plan-shaped results returned by the backend.' },
     ],
-    stack: ['Python', 'Flask', 'LLMs', 'REST APIs', 'React', 'JavaScript', 'TailwindCSS'],
+    stack: ['Python', 'FastAPI', 'LLMs', 'REST APIs', 'React', 'JavaScript', 'TailwindCSS'],
     decisions: [
-      'A Python backend (Flask) keeps the AI + DB orchestration in one place, where it is easiest to reason about.',
-      'The AI is treated as a reasoning layer over the real schema — not a blind text generator.',
-      'Optimization is surfaced as an explanation, not a black-box rewrite, so developers learn from each suggestion.',
+      'Cloud backend is FastAPI + Uvicorn on Render; cloud frontend is React on Netlify.',
+      'Generator schema context is user-provided schema_def text injected into the LLM prompt — not live database introspection.',
+      'Cloud optimizer returns explanation + plan-shaped JSON from Gemini/demo heuristics; it does not execute real EXPLAIN against a user database.',
     ],
     metrics: [
       { k: 'Optimization', v: 'Execution-plan aware' },
@@ -210,7 +210,7 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['queryforge', 'sql', 'database assistant', 'query optim'],
-    a: 'QueryForgeAI is an AI-powered SQL query optimization & database assistant. It converts natural language into SQL, dissects execution plans, explains queries, and rewrites inefficient SQL automatically. It reasons over the live schema rather than blindly generating text. Live: queryforge-sriiverse.netlify.app',
+    a: 'QueryForgeAI is an AI-powered SQL/Mongo query generator and optimizer. Generator: user provides dialect + pasted schema_def + natural-language question → POST /generate-sql. Optimizer: pasted SQL/pipeline + dialect → POST /analyze. Cloud path uses Gemini (with optional Groq failover) or demo heuristics — it does not connect to a live user database or run real EXPLAIN. Backend is FastAPI on Render; frontend is React on Netlify. Live: queryforge-sriiverse.netlify.app',
   },
   {
     q: ['placement', 'career', 'resume', 'roadmap', 'placement pro'],
@@ -226,7 +226,7 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['backend', 'server', 'api', 'backend project', 'show backend'],
-    a: 'Backend engineering is the core. Sudhanshu builds Python services with Flask and FastAPI — REST APIs, JWT auth, business logic and data modelling. QueryForgeAI and Placement Pro+ are both Python-backend-driven; RepoRadarAI uses FastAPI behind a React frontend.',
+    a: 'Backend engineering is the core. Sudhanshu builds Python services with Flask and FastAPI — REST APIs, JWT auth, business logic and data modelling. Placement Pro+ is Python/Flask-driven in the portfolio card; QueryForgeAI\'s inspected implementation is FastAPI + Uvicorn; RepoRadarAI uses FastAPI behind a React frontend.',
   },
   {
     q: ['architecture', 'system design', 'how does it work', 'explain the architecture', 'how is it built', 'five-layer'],

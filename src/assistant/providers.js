@@ -688,7 +688,7 @@ const LocalProvider = {
 
   _recruiterFocusText(focusArea, projects) {
     const map = {
-      backend:  `QueryForgeAI and RepoRadarAI both have Python backends in production. Flask for QueryForge's orchestration, FastAPI for RepoRadar's async GitHub ingestion. Both handle real user traffic.`,
+      backend:  `QueryForgeAI and RepoRadarAI both have Python backends in production. FastAPI + Uvicorn for QueryForgeAI's cloud API, FastAPI for RepoRadar's async GitHub ingestion. Placement Pro+ remains the Flask-oriented portfolio card.`,
       ai:       `All three products ship applied AI: QueryForgeAI uses LLMs for SQL optimization, Placement Pro+ for resume gap detection, and RepoRadarAI for repository understanding. AI is never a gimmick — it's the core product feature.`,
       database: `QueryForgeAI is the deepest database engineering project — natural language to SQL, execution plan analysis, and schema-aware query optimization. It treats the database as an intelligent system, not just storage.`,
       frontend: `Placement Pro+'s terminal-style OS interface and RepoRadarAI's React/TypeScript surface demonstrate full-stack delivery. The frontend is always decoupled from the backend over REST.`,
@@ -992,7 +992,10 @@ const LocalProvider = {
     this._bindConversationState(ctx, classification, spoken);
 
     payload = Object.assign({}, payload, {
-      ...(followupHint && !wantsDirectAnswerOnly(qRaw) && intelligenceIntent !== 'undocumented_detail'
+      ...(followupHint && !wantsDirectAnswerOnly(qRaw)
+        && intelligenceIntent !== 'undocumented_detail'
+        && intelligenceIntent !== 'queryforge_detail'
+        && intelligenceIntent !== 'queryforge_unknown'
         ? { _followupHint: followupHint }
         : {}),
       _conversationalMove: move,
@@ -1305,7 +1308,8 @@ const LocalProvider = {
     const task = ctx?.payload?._portfolioIntelligence
       || ctx?.payload?._reasoningStrategy?.task
       || '';
-    if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown') {
+    if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
+      || task === 'queryforge_detail' || task === 'queryforge_unknown') {
       return null;
     }
     // Don't bolt navigation/CTAs onto short identity / brand / beyond-resume answers

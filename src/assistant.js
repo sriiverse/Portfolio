@@ -228,7 +228,11 @@ function buildFollowups(intent, payload, focusProject, questionFrame) {
   const rawQ = questionFrame?.rawQuery || '';
   if (wantsDirectAnswerOnly(rawQ)) return [];
   if (payload?._portfolioIntelligence === 'undocumented_detail'
-    || payload?._reasoningStrategy?.task === 'undocumented_detail') {
+    || payload?._portfolioIntelligence === 'queryforge_detail'
+    || payload?._portfolioIntelligence === 'queryforge_unknown'
+    || payload?._reasoningStrategy?.task === 'undocumented_detail'
+    || payload?._reasoningStrategy?.task === 'queryforge_detail'
+    || payload?._reasoningStrategy?.task === 'queryforge_unknown') {
     return [];
   }
   const proj = payload?.project

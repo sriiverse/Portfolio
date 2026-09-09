@@ -66,21 +66,22 @@ export function scoreProjectConsistency({ text, context = {} }) {
     }
   }
 
-  // Stack attribution consistency: Flask + QueryForge is fine; FastAPI + QueryForge alone is soft warn if known mapping provided
+  // Stack attribution consistency: QueryForge cloud backend is FastAPI (CODE-PROVEN);
+  // RepoRadar is FastAPI; do not attribute Flask exclusively to QueryForge.
   const stackMap = context.projectStackMap || {
-    queryforge: [/flask/i, /postgres/i, /sql/i],
+    queryforge: [/fastapi/i, /sql/i, /gemini/i],
     reporadar: [/fastapi/i, /react/i, /typescript/i],
-    placementpro: [/react/i, /python/i],
+    placementpro: [/flask/i, /python/i],
   };
 
   for (const hit of mentioned) {
     const expected = stackMap[hit.id];
     if (!expected) continue;
     // If answer pairs this project with a strongly wrong stack exclusive claim
-    if (hit.id === 'queryforge' && /\bQueryForge\w*\b[^.!?]{0,60}\bFastAPI\b/i.test(t) && !/\bRepoRadar/i.test(t)) {
+    if (hit.id === 'queryforge' && /\bQueryForge\w*\b[^.!?]{0,60}\bFlask\b/i.test(t) && !/\bPlacement/i.test(t) && !/\boutdated|not flask|inspected implementation/i.test(t)) {
       score -= 1.5;
-      notes.push('stack-mismatch:queryforge-fastapi');
-      suggestions.push('QueryForge is Flask-orchestration in this portfolio; don’t attribute FastAPI to it.');
+      notes.push('stack-mismatch:queryforge-flask');
+      suggestions.push('QueryForgeAI’s inspected cloud backend is FastAPI + Uvicorn; don’t attribute Flask to it as current FACT.');
     }
     if (hit.id === 'reporadar' && /\bRepoRadar\w*\b[^.!?]{0,60}\bFlask\b/i.test(t) && !/\bQueryForge/i.test(t)) {
       score -= 1.5;

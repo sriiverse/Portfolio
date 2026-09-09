@@ -8,6 +8,7 @@
  * NO external calls. NO fabrication. Every returned source points back to content.js.
  */
 import { PROFILE, PROJECTS, STACK, ARCHITECTURE, JOURNEY, ASSISTANT_KB } from '../content.js';
+import { getQueryForgeFacetDocs } from './queryforgeKnowledge.js';
 
 /* ============================================================
    TEXT UTILITIES
@@ -221,6 +222,23 @@ ASSISTANT_KB.forEach((entry, i) => {
   });
 });
 
+// QueryForgeAI CODE-PROVEN engineering facets (Phase 2A)
+getQueryForgeFacetDocs().forEach((f) => {
+  addDoc({
+    id: f.id,
+    kind: f.kind,
+    projectId: f.projectId,
+    facet: f.facet,
+    depth: f.depth,
+    confidence: f.confidence,
+    title: f.title,
+    text: f.text,
+    tags: stemSet(f.tagsText),
+    source: f.source,
+    link: f.link,
+  });
+});
+
 /* ============================================================
    SCORING
    ============================================================ */
@@ -253,7 +271,19 @@ function scoreDoc(doc, queryTokens, queryStems) {
   }
 
   // Kind weighting — prefer structured project/profile docs over legacy KB
-  const kindWeight = { profile: 1.1, brand: 1.25, project: 1.0, 'project-arch': 0.95, recommend: 1.0, stack: 0.9, 'arch-overview': 0.9, arch: 0.8, contact: 0.6, qa: 0.7 };
+  const kindWeight = {
+    profile: 1.1,
+    brand: 1.25,
+    project: 1.0,
+    'project-arch': 0.95,
+    'project-detail': 1.35,
+    recommend: 1.0,
+    stack: 0.9,
+    'arch-overview': 0.9,
+    arch: 0.8,
+    contact: 0.6,
+    qa: 0.7,
+  };
   score *= (kindWeight[doc.kind] || 0.8);
 
   return score;
@@ -277,18 +307,18 @@ function scoreDoc(doc, queryTokens, queryStems) {
    affinity entry to begin with.
    ============================================================ */
 const QUESTION_TYPE_KIND_AFFINITY = {
-  ProjectExplanation: ['project', 'project-arch', 'project-stack'],
-  ArchitectureExplanation: ['project-arch', 'arch', 'arch-overview'],
-  TechnologyExplanation: ['stack', 'project-stack'],
-  SkillVerification: ['stack', 'project-stack', 'project'],
+  ProjectExplanation: ['project-detail', 'project', 'project-arch', 'project-stack'],
+  ArchitectureExplanation: ['project-detail', 'project-arch', 'arch', 'arch-overview'],
+  TechnologyExplanation: ['project-detail', 'stack', 'project-stack'],
+  SkillVerification: ['stack', 'project-stack', 'project', 'project-detail'],
   Recruiter: ['recommend'],
   Recommendation: ['recommend', 'project'],
   Experience: ['resume', 'project', 'profile'],
   Identity: ['brand', 'profile'],
-  EvidenceRequest: ['project', 'project-arch', 'project-stack'],
+  EvidenceRequest: ['project-detail', 'project', 'project-arch', 'project-stack'],
   Career: ['journey', 'qa'],
   Behavioral: ['qa', 'recommend'],
-  Limitation: ['qa'],
+  Limitation: ['project-detail', 'qa'],
   Capability: ['qa'],
   Conversation: ['qa'],
 };

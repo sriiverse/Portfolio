@@ -31,6 +31,10 @@ import {
   getIdentityClaimsByFacet,
 } from './identity.js';
 import { classifyConversationMode, isBoundFollowUpQuery } from './conversation.js';
+import {
+  isQueryForgeQuery,
+  matchQueryForgeFacet,
+} from './queryforgeKnowledge.js';
 
 export const REASONING_STRATEGIES = [
   'Describe', 'Explain', 'Compare', 'Recommend', 'Evaluate',
@@ -394,6 +398,21 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Infer', task: 'product_oriented' };
   }
 
+  // QueryForge CODE-PROVEN facets / explicit unknowns — before generic why_* only when
+  // the query is QueryForge-scoped (or a QF-unique engineering cue).
+  {
+    const facet = matchQueryForgeFacet(t);
+    const designIntent = /why .{0,48}(fastapi|flask|gemini|groq|netlify|render).{0,32}(chosen|choose|chose|picked|prefer)|why (was|is|did).{0,24}(fastapi|flask|gemini|netlify|render)\b|why fastapi|why gemini|why netlify|why render/i.test(t)
+      || (isQueryForgeQuery(t) && /why (was|is|did).{0,40} chosen|hardest engineering|lessons learned|what would you improve about queryforge|design intent/i.test(t));
+
+    if (facet?.confidence === 'unknown' || (designIntent && isQueryForgeQuery(t))) {
+      return { strategy: 'Summarize', task: 'queryforge_unknown' };
+    }
+    if (facet && facet.confidence === 'documented') {
+      return { strategy: 'Summarize', task: 'queryforge_detail', focus: facet.id };
+    }
+  }
+
   if (/why flask|flask instead of fastapi|prefer flask|chose flask|keep flask|kept flask/i.test(t)) {
     return { strategy: 'Explain', task: 'why_flask' };
   }
@@ -416,8 +435,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Explain', task: 'arch_scale' };
   }
 
-  // Engineering-detail asks must never collapse into project_overview / tagline menus.
-  // Existing specific tasks (why_flask, arch_tradeoffs, probes, …) already returned above.
+  // Engineering-detail without a QueryForge facet (or for other projects).
   if (isEngineeringDetailQuery(t)) {
     return { strategy: 'Summarize', task: 'undocumented_detail' };
   }
@@ -1061,6 +1079,24 @@ function opSummarize(ctx, { task }) {
     ].join('\n\n');
   }
 
+  if (task === 'queryforge_detail' || task === 'queryforge_unknown') {
+    const facet = matchQueryForgeFacet(ctx.query);
+    if (task === 'queryforge_unknown' || facet?.confidence === 'unknown') {
+      return [
+        `That design-intent detail for **QueryForgeAI** is not documented as CODE-PROVEN FACT.`,
+        `I will not invent why FastAPI, Gemini, Netlify, or Render were chosen, or undocumented “hardest problem / improve next” stories.`,
+        `I can answer verified mechanics instead: user inputs, /generate-sql and /analyze flows, Gemini/Groq behavior, and cloud-path limitations (no live DB, no real EXPLAIN).`,
+      ].join('\n\n');
+    }
+    if (facet?.text) {
+      return facet.text;
+    }
+    return [
+      `I don't have a verified facet for that QueryForgeAI detail yet.`,
+      `Ask about user inputs, generator/optimizer data flow, models, APIs, validation, failures, or cloud-path limitations.`,
+    ].join('\n\n');
+  }
+
   if (task === 'self_intro') {
     const subject = ctx.identity.subject;
     return [
@@ -1231,7 +1267,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   };
 
   // --- Summarize / identity ---
-  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown', 'undocumented_detail'].includes(task)) {
+  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown', 'undocumented_detail', 'queryforge_detail', 'queryforge_unknown'].includes(task)) {
     if (task === 'preference_gap') return opConversationMode(opCtx, { task });
     return opSummarize(opCtx, { task });
   }

@@ -189,7 +189,8 @@ function pickReflectionPhrase(ctx) {
 
   const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
   const task = String(ctx?.payload?._portfolioIntelligence || '');
-  if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown') return null;
+  if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
+    || task === 'queryforge_detail' || task === 'queryforge_unknown') return null;
 
   const memory = ctx.memory;
   const turnCount = memory?.turnCount ?? (memory?.turns?.length || 0);
@@ -289,7 +290,8 @@ export function pickContextualInvite(ctx = {}, move = 'Answer') {
   const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
   const modeId = resolveAudienceMode(ctx);
 
-  if (task === 'undocumented_detail' || task === 'honest_unknown') return null;
+  if (task === 'undocumented_detail' || task === 'honest_unknown'
+    || task === 'queryforge_detail' || task === 'queryforge_unknown') return null;
   if (wantsDirectAnswerOnly(q)) return null;
 
   if (task === 'why_flask' || /\bwhy flask\b/i.test(q)) {
@@ -629,7 +631,8 @@ export function applyConversationFlow(text, ctx = {}) {
   const softMode = ['preference_gap', 'opinion', 'self', 'ops_story', 'intro', 'brief'].includes(mode);
   const task = String(ctx?.payload?._portfolioIntelligence || ctx?.payload?._reasoningStrategy?.task || '');
   const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
-  if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown') {
+  if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
+    || task === 'queryforge_detail' || task === 'queryforge_unknown') {
     return out.replace(/\n{3,}/g, '\n\n').trim();
   }
   if (!endsWithQuestion(out)) {

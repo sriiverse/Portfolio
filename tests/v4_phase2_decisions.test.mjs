@@ -19,6 +19,7 @@ import {
   getDecisionRecordById,
   validateDecisionRecords,
 } from '../src/assistant/decisions.js';
+import { PROJECTS } from '../src/content.js';
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -71,10 +72,16 @@ test('getDecisionsForProject(queryforge) returns 3 records', () => {
   assert(list.length === 3, `got ${list.length}`);
 });
 
-test('Flask decisions resolve chosen=Flask from graph project stack', () => {
-  const flask = getDecisionsForTechnology('Flask', graph);
-  assert(flask.length >= 1, 'expected Flask-linked decisions');
-  assert(flask.every((r) => r.chosen === 'Flask' || r.relatedTechs.includes('Flask')), 'flask linkage');
+test('FastAPI decisions resolve chosen=FastAPI from graph project stack', () => {
+  const fastapi = getDecisionsForTechnology('FastAPI', graph);
+  assert(fastapi.length >= 1, 'expected FastAPI-linked decisions');
+  assert(fastapi.every((r) => r.chosen === 'FastAPI' || r.relatedTechs.includes('FastAPI')), 'fastapi linkage');
+});
+
+test('Placement Pro+ still lists Flask on its stack card', () => {
+  const pp = PROJECTS.find((p) => p.id === 'placementpro');
+  assert(pp, 'placementpro project');
+  assert(pp.stack.includes('Flask'), 'Placement Pro+ still ships Flask');
 });
 
 test('alternatives never claim rejection', () => {

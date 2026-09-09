@@ -74,29 +74,29 @@ test('helpers: detail vs overview shapes', () => {
   assert(!wantsDirectAnswerOnly(Q1), 'Q1 does not force direct-only flag');
 });
 
-test('Q1 classify: undocumented_detail, not project_overview', () => {
+test('Q1 classify: queryforge_detail, not project_overview', () => {
   const frame = buildQuestionFrame(Q1, {});
   const r = classifyReasoningStrategy(Q1, { questionFrame: frame, memory: {} });
   assert(r.task !== 'project_overview', `got ${r.task}`);
-  assert(r.task === 'undocumented_detail', `expected undocumented_detail, got ${r.task}`);
+  assert(r.task === 'queryforge_detail', `expected queryforge_detail, got ${r.task}`);
   const text = synthesizeReasoning(r, Q1, { questionFrame: frame, memory: {} });
-  assert(/not documented/i.test(text), 'honest gap');
+  assert(/schema_def|user-provided schema|pasted/i.test(text), 'schema fact');
   assert(!/Optimize database queries at the speed of thought/i.test(text), 'no tagline dump');
   assert(!/Interested in why I chose this architecture/i.test(text), 'no architecture invite in synth');
 });
 
-test('Q2 classify: undocumented_detail, not project_overview', () => {
+test('Q2 classify: queryforge_detail, not project_overview', () => {
   const frame = buildQuestionFrame(Q2, {});
   const r = classifyReasoningStrategy(Q2, { questionFrame: frame, memory: {} });
   assert(r.task !== 'project_overview', `got ${r.task}`);
-  assert(r.task === 'undocumented_detail', `expected undocumented_detail, got ${r.task}`);
+  assert(r.task === 'queryforge_detail', `expected queryforge_detail, got ${r.task}`);
 });
 
-test('Q1/Q2 end-to-end: no overview menu, honest undocumented', async () => {
+test('Q1/Q2 end-to-end: code-proven answers, no overview menu', async () => {
   for (const q of [Q1, Q2]) {
     const out = await render(q);
-    assert(out?.payload?._portfolioIntelligence === 'undocumented_detail', `${q.slice(0, 40)}… task=${out?.payload?._portfolioIntelligence}`);
-    assert(/not documented/i.test(out.text), 'gap language');
+    assert(out?.payload?._portfolioIntelligence === 'queryforge_detail', `${q.slice(0, 40)}… task=${out?.payload?._portfolioIntelligence}`);
+    assert(/schema_def|dialect|user-provided|pasted schema/i.test(out.text), 'inputs fact');
     assert(!/Optimize database queries at the speed of thought/i.test(out.text), 'no tagline');
     assert(!/Interested in why I chose this architecture/i.test(out.text), 'no arch invite');
     assert(!/What should he learn next/i.test(out.text), 'no learn-next');
@@ -108,7 +108,7 @@ test('Q2 suppresses contextual invites', () => {
   const invite = pickContextualInvite({
     query: Q2,
     questionFrame: { rawQuery: Q2, questionType: 'ProjectExplanation' },
-    payload: { _portfolioIntelligence: 'undocumented_detail' },
+    payload: { _portfolioIntelligence: 'queryforge_detail' },
   }, 'Answer');
   assert(invite == null, `invite should be null, got ${invite}`);
 });
