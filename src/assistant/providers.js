@@ -30,8 +30,9 @@ import {
   isEngineeringDetailQuery,
 } from './reasoning.js';
 import { wantsDirectAnswerOnly } from './conversation.js';
-import { matchQueryForgeFacet } from './queryforgeKnowledge.js';
-import { matchPlacementProFacet } from './placementproKnowledge.js';
+import { isQueryForgeQuery, matchQueryForgeFacet } from './queryforgeKnowledge.js';
+import { isPlacementProQuery, matchPlacementProFacet } from './placementproKnowledge.js';
+import { isRepoRadarQuery, matchRepoRadarFacet } from './reporadarKnowledge.js';
 import { finalizeWithReflection } from './reflection.js';
 import {
   adaptDraft,
@@ -691,8 +692,8 @@ const LocalProvider = {
 
   _recruiterFocusText(focusArea, projects) {
     const map = {
-      backend:  `QueryForgeAI and RepoRadarAI both have Python backends in production. FastAPI + Uvicorn for QueryForgeAI's cloud API, FastAPI for RepoRadar's async GitHub ingestion. Placement Pro+ remains the Flask-oriented portfolio card.`,
-      ai:       `All three products ship applied intelligence: QueryForgeAI uses LLMs for SQL generation/analysis, Placement Pro+ uses MiniLM embeddings plus graph/heuristic templates (not a chat LLM), and RepoRadarAI for repository understanding.`,
+      backend:  `QueryForgeAI's inspected cloud API is FastAPI + Uvicorn. Placement Pro+ is Flask. RepoRadarAI's inspected implementation is Next.js App Router (GET /api/analyze) with Octokit — not a Python/FastAPI backend.`,
+      ai:       `All three products ship applied intelligence, but not the same kind: QueryForgeAI uses LLMs for SQL generation/analysis, Placement Pro+ uses MiniLM embeddings plus graph/heuristic templates (not a chat LLM), and RepoRadarAI uses deterministic GitHub-metadata heuristics (not a generative model).`,
       database: `QueryForgeAI is the deepest database engineering project — natural language to SQL, execution plan analysis, and schema-aware query optimization. It treats the database as an intelligent system, not just storage.`,
       frontend: `Placement Pro+'s terminal-style OS interface and RepoRadarAI's React/TypeScript surface demonstrate full-stack delivery. The frontend is always decoupled from the backend over REST.`,
       fullstack: `Placement Pro+ is the most complete full-stack product — Flask + React/TypeScript, structured profiles, graph skill-gap, template roadmaps, and a terminal-style OS frontend. End-to-end ownership, single engineer.`,
@@ -1001,6 +1002,8 @@ const LocalProvider = {
         && intelligenceIntent !== 'queryforge_unknown'
         && intelligenceIntent !== 'placementpro_detail'
         && intelligenceIntent !== 'placementpro_unknown'
+        && intelligenceIntent !== 'reporadar_detail'
+        && intelligenceIntent !== 'reporadar_unknown'
         ? { _followupHint: followupHint }
         : {}),
       _conversationalMove: move,
@@ -1247,7 +1250,8 @@ const LocalProvider = {
     if (!t) return t;
 
     const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
-    const asksHowAssistantWorks = /how (do|does) (you|the assistant|this) work|are you (an |a )?(llm|ai|chatgpt|gpt|rag)|external api|do you (call|use) (an? )?(api|llm|openai|gemini)|retrieval|embedding|knowledge base|how (are|is) (you|this) (built|implemented)/i.test(q);
+    const asksHowAssistantWorks = /how (do|does) (you|the assistant|this) work|are you (an |a )?(llm|ai|chatgpt|gpt|rag)|external api|do you (call|use) (an? )?(api|llm|openai|gemini)|retrieval|embedding|knowledge base|how (are|is) (you|this) (built|implemented)/i.test(q)
+      && !isQueryForgeQuery(q) && !isPlacementProQuery(q) && !isRepoRadarQuery(q);
 
     // Always kill doc-export leads and RAG self-labels in visitor-facing speech.
     t = t.replace(/\*{0,2}Based on what is documented:\*{0,2}\s*/gi, '');
@@ -1315,7 +1319,8 @@ const LocalProvider = {
       || '';
     if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
       || task === 'queryforge_detail' || task === 'queryforge_unknown'
-      || task === 'placementpro_detail' || task === 'placementpro_unknown') {
+      || task === 'placementpro_detail' || task === 'placementpro_unknown'
+      || task === 'reporadar_detail' || task === 'reporadar_unknown') {
       return null;
     }
     // Don't bolt navigation/CTAs onto short identity / brand / beyond-resume answers
@@ -1600,6 +1605,8 @@ const LocalProvider = {
     if (qfFacet?.confidence === 'documented') return false;
     const ppFacet = matchPlacementProFacet(q);
     if (ppFacet?.confidence === 'documented') return false;
+    const rrFacet = matchRepoRadarFacet(q);
+    if (rrFacet?.confidence === 'documented') return false;
 
     // Explicit documentation / walkthrough mode only
     if (/\b(walk (me )?through|deep dive|in detail|documentation|document|open (the )?project|project page|full (write-?up|breakdown))\b/i.test(q)) {

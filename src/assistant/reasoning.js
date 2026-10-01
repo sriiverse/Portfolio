@@ -42,6 +42,11 @@ import {
   matchPlacementProFacet,
   PLACEMENTPRO_FACETS,
 } from './placementproKnowledge.js';
+import {
+  isRepoRadarQuery,
+  matchRepoRadarFacet,
+  REPORADAR_FACETS,
+} from './reporadarKnowledge.js';
 
 export const REASONING_STRATEGIES = [
   'Describe', 'Explain', 'Compare', 'Recommend', 'Evaluate',
@@ -259,10 +264,15 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   const prevTask = mem?.activeMode || mem?.lastCommitment?.task || '';
   const ppBoundEarly = boundId === 'placementpro' || /placement/i.test(String(boundId));
   const ppQueryEarly = isPlacementProQuery(t) || ppBoundEarly;
+  const rrBoundEarly = boundId === 'reporadar' || /reporadar/i.test(String(boundId));
+  const rrQueryEarly = isRepoRadarQuery(t) || rrBoundEarly;
 
   if (mode === 'probe') {
     if (/hardest/i.test(t) && ppQueryEarly) {
       return { strategy: 'Summarize', task: 'placementpro_unknown' };
+    }
+    if (/hardest/i.test(t) && rrQueryEarly) {
+      return { strategy: 'Summarize', task: 'reporadar_unknown' };
     }
     if (/scale|qps|rps/i.test(t) && ppQueryEarly) {
       return { strategy: 'Summarize', task: 'placementpro_unknown' };
@@ -281,6 +291,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (boundId && isBoundFollowUpQuery(query)) {
     const qfBound = boundId === 'queryforge' || /queryforge/i.test(String(boundId));
     const ppBound = boundId === 'placementpro' || /placement/i.test(String(boundId));
+    const rrBound = boundId === 'reporadar' || /reporadar/i.test(String(boundId));
 
     // QueryForgeAI: stay on CODE-PROVEN facets — never generic five-layer arch_why
     // (that spine still names Flask and would contradict the inspected FastAPI backend).
@@ -346,6 +357,39 @@ export function classifyReasoningStrategy(query, ctx = {}) {
       }
     }
 
+    if (rrBound) {
+      if (/hardest/i.test(t)) {
+        return { strategy: 'Summarize', task: 'reporadar_unknown' };
+      }
+      if (/improve|change|rebuild|trade-?off|why that architecture|why this architecture|why .{0,12}architecture|lessons learned|design intent|why (did|do) you choose|why that\??$|why next\.?js|why vercel|why octokit|why these scoring/i.test(t)
+        && !/\bhow (does|is|was|did)\b/i.test(t)) {
+        return { strategy: 'Summarize', task: 'reporadar_unknown' };
+      }
+
+      let focus = 'rr-user-flow';
+      if (/score|health|calculated/i.test(t)) {
+        focus = 'rr-scoring';
+      } else if (/bus factor/i.test(t)) {
+        focus = 'rr-bus-factor';
+      } else if (/model|llm|gemini|rag|embedding|ai verdict/i.test(t)) {
+        focus = 'rr-ai-model';
+      } else if (/fetch|github|octokit|\/api\/analyze/i.test(t)) {
+        focus = 'rr-github';
+      } else if (/clone|ingest|source code|file/i.test(t)) {
+        focus = 'rr-ingestion';
+      } else if (/cache|stored|persist/i.test(t)) {
+        focus = 'rr-caching';
+      } else if (/architect|built|designed|structured|tech stack|\bstack\b|next\.?js|fastapi/i.test(t)) {
+        focus = 'rr-architecture';
+      } else if (/how\b|how does|how did|how is|work\??$/i.test(t)) {
+        focus = 'rr-user-flow';
+      }
+
+      if (/how\b|how does|how did|how is|work\??$|architect|built|designed|structured|score|health|bus|fetch|github|clone|model|llm|cache|stored|stack|next|octokit|analy/i.test(t)) {
+        return { strategy: 'Summarize', task: 'reporadar_detail', focus };
+      }
+    }
+
     if (/hardest/i.test(t)) {
       return { strategy: 'Explain', task: 'probe_hardest' };
     }
@@ -397,13 +441,14 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (/beyond (his |the |what'?s .{0,20})?resume|person behind|meeting the person|don'?t want to see .{0,24}resume|how does he approach|what does he care|makes (his )?projects interesting/i.test(t)) {
     return { strategy: 'Summarize', task: 'beyond_resume' };
   }
-  if (/how (do|does) (you|the assistant|this) work|are you (calling|using).*(api|llm)|external api|retrieval|embedding|knowledge base/i.test(t)) {
+  if ((/how (do|does) (you|the assistant|this) work|are you (calling|using).*(api|llm)|external api|retrieval|embedding|knowledge base/i.test(t))
+    && !isQueryForgeQuery(t) && !isPlacementProQuery(t) && !isRepoRadarQuery(t)) {
     return { strategy: 'Explain', task: 'assistant_mechanism' };
   }
 
   if (/weakest|weak area|biggest weakness|limitation|where could (he|sudhanshu) improve|what.*(lack|missing (?!skill))|areas? (to|for) improve/i.test(t)
     || (/improve/i.test(t) && /where|what|area/i.test(t))) {
-    if (!isPlacementProQuery(t) && !isQueryForgeQuery(t)) {
+    if (!isPlacementProQuery(t) && !isQueryForgeQuery(t) && !isRepoRadarQuery(t)) {
       return { strategy: 'Critique', task: 'weakest_area' };
     }
   }
@@ -519,6 +564,23 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     }
   }
 
+  {
+    const facet = matchRepoRadarFacet(t);
+    const otherProjectBound = boundId
+      && boundId !== 'reporadar'
+      && !/reporadar/i.test(String(boundId))
+      && !isRepoRadarQuery(t);
+    const designIntent = /why .{0,48}(next\.?js|octokit|vercel|scoring|fastapi).{0,32}(chosen|choose|chose|picked|prefer)|why (was|is|did).{0,24}(next\.?js|octokit|vercel|fastapi)\b|why next\.?js|why vercel|why octokit/i.test(t)
+      || (isRepoRadarQuery(t) && /why (was|is|did).{0,40} chosen|hardest|lessons learned|what did you learn|what would you improve|design intent|trade-?off/i.test(t));
+
+    if (!otherProjectBound && (facet?.confidence === 'unknown' || (designIntent && isRepoRadarQuery(t)))) {
+      return { strategy: 'Summarize', task: 'reporadar_unknown' };
+    }
+    if (!otherProjectBound && facet && facet.confidence === 'documented') {
+      return { strategy: 'Summarize', task: 'reporadar_detail', focus: facet.id };
+    }
+  }
+
   if (/why flask|flask instead of fastapi|prefer flask|chose flask|keep flask|kept flask/i.test(t)) {
     return { strategy: 'Explain', task: 'why_flask' };
   }
@@ -631,6 +693,11 @@ export function isEngineeringDetailQuery(query) {
     || /\b(skill.?gap|knowledge graph|minilm|networkx|cosine similarity)\b/i.test(t)
     || /\b(authentication|jwt|company matching|roadmap)\b/i.test(t)
     || /\bdoes (it|placement).{0,24}use (an? )?(llm|knowledge graph)\b/i.test(t)
+    || /\b(bus factor|health score|octokit|\/api\/analyze|github rest)\b/i.test(t)
+    || /\bclone (the )?(repo|repository)\b/i.test(t)
+    || /\b(source code|file ingest|git clone)\b/i.test(t)
+    || /\bhow is .{0,60} calculated\b/i.test(t)
+    || /\bwhat does .{0,40}fetch\b/i.test(t)
   );
 }
 
@@ -802,14 +869,14 @@ function opConversationMode(ctx, { task }) {
   if (task === 'challenge_response') {
     if (/flask/i.test(q)) {
       return speak(ctx.strategy,
-        `I'd concede FastAPI is my default today for new I/O-heavy services — ${nm(rr)} already moved that way.`,
+        `I'd concede FastAPI is my default today for new I/O-heavy Python services — QueryForgeAI already shipped that way.`,
         `Flask stayed on ${nm(qf)} and ${nm(pp)} because orchestration clarity and an explicit request lifecycle mattered more than async throughput then.`,
         `Bad choice for a greenfield async ingestion service? Yes. Bad choice for those two ships at the time? I still defend it.`);
     }
     if (/thin wrapper|reporadar/i.test(q)) {
       return speak(ctx.strategy,
-        `Fair push. The thin version of RepoRadar would stop at a summary endpoint.`,
-        `What I actually shipped is layered intelligence — summary → architecture → deep explanation — plus a real FastAPI/React split and a public repo you can inspect.`,
+        `Fair push. The thin version of RepoRadar would stop at a stars-and-README page.`,
+        `What I actually shipped is GitHub REST metadata → heuristic health/bus-factor/risk rules in a Next.js App Router app, plus a public repo you can inspect. It does not clone source or call an LLM.`,
         `If that still reads thin for your bar, say which layer you want torn apart.`);
     }
     if (/over-?engineered|five-?layer|defend/i.test(q)) {
@@ -821,7 +888,7 @@ function opConversationMode(ctx, { task }) {
     if (/wrapping|just (an? )?llm|aren'?t you just/i.test(q)) {
       return speak(ctx.strategy,
         `If it were only a wrapper, the hard part would be the prompt string.`,
-        `The real work is grounding — schema-aware SQL on ${nm(qf)}, resume-anchored advice on ${nm(pp)}, layered repo intelligence on ${nm(rr)}.`,
+        `The real work is grounding — schema-aware SQL on ${nm(qf)}, profile-anchored graph templates on ${nm(pp)}, GitHub-metadata heuristics on ${nm(rr)}.`,
         `LLM calls are the engine; correctness against real data is the product.`);
     }
     if (/criticiz/i.test(q)) {
@@ -934,9 +1001,10 @@ function opConversationMode(ctx, { task }) {
     const focus = (boundId && ctx.byId(boundId)) || qf;
     if (focus?.id === 'reporadar') {
       return speak(ctx.strategy,
-        `Hardest part on ${nm(focus)} was layered intelligence that stays useful — summary → architecture → deep explanation — without collapsing into a generic chat wrapper.`,
-        `Second: keeping the FastAPI/React split honest while GitHub API limits and noisy repos push you toward shallow answers.`,
-        `That's the bar that ship had to clear.`);
+        `That “hardest part” for ${nm(focus)} is not documented as CODE-PROVEN FACT.`,
+        `I will not invent a FastAPI/LLM architecture story to fill the gap.`,
+        `Ask about verified mechanics instead: Octokit GitHub REST caps, health/bus-factor formulas, in-memory cache, or what is not ingested.`,
+      );
     }
     if (focus?.id === 'placementpro') {
       return speak(ctx.strategy,
@@ -1043,7 +1111,7 @@ function opExplain(ctx, { task }) {
     if (task === 'why_flask') {
       conclusion = `I chose Flask on ${projectsUsing.map(nm).join(' and ') || 'the Flask-based ships'} because I wanted a smaller surface and explicit control over the request lifecycle while wiring backend + AI together.`;
     } else if (task === 'why_fastapi') {
-      conclusion = `I reached for FastAPI on ${nm(rr)} because the service is API-first with I/O-heavy GitHub ingestion — async mattered more than a minimal sync surface.`;
+      conclusion = `I reached for FastAPI on ${projectsUsing.map(nm).join(' and ') || nm(qf)} because those API-first Python services needed async I/O more than a minimal sync surface.`;
     } else {
       conclusion = `I built the UIs in React — especially on ${projectsUsing.map(nm).join(' and ') || 'the React ships'} — because that's the ecosystem I actually shipped in.`;
     }
@@ -1233,6 +1301,26 @@ function opSummarize(ctx, { task }) {
     ].join('\n\n');
   }
 
+  if (task === 'reporadar_detail' || task === 'reporadar_unknown') {
+    const focusedId = ctx.classification?.focus;
+    const facet = (focusedId && REPORADAR_FACETS.find((f) => f.id === focusedId))
+      || matchRepoRadarFacet(ctx.query);
+    if (task === 'reporadar_unknown' || facet?.confidence === 'unknown') {
+      return [
+        `That design-intent detail for **RepoRadarAI** is not documented as CODE-PROVEN FACT.`,
+        `I will not invent why Next.js, Octokit, Vercel, or these scoring formulas were chosen, or undocumented “hardest problem / improve next” stories.`,
+        `The inspected implementation is Next.js 14 + GitHub REST + heuristics — not FastAPI, not an LLM. I can answer verified mechanics instead: URL ingest, Octokit caps, health/bus-factor formulas, cache, and failure modes.`,
+      ].join('\n\n');
+    }
+    if (facet?.text) {
+      return facet.text;
+    }
+    return [
+      `I don't have a verified facet for that RepoRadarAI detail yet.`,
+      `Ask about ingestion, GitHub REST calls, health scoring, bus factor, caching, or what the product does not do (clone, LLM, source architecture).`,
+    ].join('\n\n');
+  }
+
   if (task === 'self_intro') {
     const subject = ctx.identity.subject;
     return [
@@ -1404,7 +1492,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   };
 
   // --- Summarize / identity ---
-  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown', 'undocumented_detail', 'queryforge_detail', 'queryforge_unknown', 'placementpro_detail', 'placementpro_unknown'].includes(task)) {
+  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown', 'undocumented_detail', 'queryforge_detail', 'queryforge_unknown', 'placementpro_detail', 'placementpro_unknown', 'reporadar_detail', 'reporadar_unknown'].includes(task)) {
     if (task === 'preference_gap') return opConversationMode(opCtx, { task });
     return opSummarize(opCtx, { task });
   }
@@ -1502,7 +1590,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
       return speak(strategy,
         `Backend engineering shows up most clearly in ${nm(ranked[0])} and ${nm(ranked[1])}.`,
         `Both center on Python services that own orchestration, APIs, and AI workflow control — the backend is the product brainstem, not a thin BFF.`,
-        `${nm(byId('reporadar'))} also has a serious FastAPI core, but its story shares the spotlight with a TypeScript React surface.`,
+        `${nm(byId('reporadar'))} is a Next.js App Router service with Octokit GitHub REST — its story shares the spotlight with a TypeScript React surface, not a FastAPI core.`,
       );
     }
     if (task === 'demo_ai') {
@@ -1511,8 +1599,8 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
       const pp = byId('placementpro');
       return speak(strategy,
         `For AI engineering depth, I'd highlight ${nm(ranked[0])} first.`,
-        `The three ships show different intelligence muscles: schema-aware SQL generation (${nm(qf)}), layered repo intelligence (${nm(rr)}), and MiniLM/graph skill-gap templates (${nm(pp)}) — not three copies of the same chat LLM.`,
-        `${nm(qf)} wins when "AI engineering" means grounding and correctness; ${nm(rr)} wins when it means productized, demoable intelligence layers.`,
+        `The three ships show different intelligence muscles: schema-aware SQL generation (${nm(qf)}), GitHub-metadata health heuristics (${nm(rr)}), and MiniLM/graph skill-gap templates (${nm(pp)}) — not three copies of the same chat LLM.`,
+        `${nm(qf)} wins when "AI engineering" means grounding and correctness; ${nm(rr)} is a productized GitHub-stats surface, not an LLM over source.`,
       );
     }
     return speak(strategy,

@@ -102,34 +102,34 @@ export const PROJECTS = [
     id: 'reporadar',
     index: '03',
     name: 'RepoRadarAI',
-    title: 'AI-Powered GitHub Repository Intelligence Platform',
-    tagline: 'X-ray vision for any public GitHub repository.',
+    title: 'GitHub Repository Health & Activity Intelligence',
+    tagline: 'Health, bus factor, and activity signals for any public GitHub repository.',
     live: 'https://repoai.sriiverseai.vercel.app/',
     repo: 'https://github.com/sriiverse/RepoRadar',
     accent: '#6C63FF',
     accent2: '#38BDF8',
     theme: 'network',
     problem:
-      'Understanding an unfamiliar repository takes hours of reading code, commit history and dependency graphs. There is no fast way to answer: "what is this codebase, how healthy is it, and how is it structured?"',
+      'Judging an unfamiliar public GitHub repo from stars and a README is slow. Maintainers and adopters still need a fast read on activity, contributor concentration, and release hygiene — without cloning the tree.',
     solution:
-      'RepoRadarAI analyzes any public GitHub repository with AI and produces architecture insights, auto-generated documentation, repository summaries, code explanations and developer-friendly intelligence — in seconds.',
+      'RepoRadarAI takes a public GitHub URL, pulls GitHub REST metadata via Octokit, and returns heuristic health, bus factor, activity, maintenance, community, and stability signals plus language stats, PR/issue activity, and a client-side PDF. It does not read target source files or call an LLM.',
     features: [
-      { icon: '🛰️', title: 'Repository Analysis', desc: 'Instant health and structure analysis of any public repo.' },
-      { icon: '📖', title: 'AI Documentation', desc: 'Auto-generate docs that actually explain the codebase.' },
-      { icon: '🏗️', title: 'Architecture Visualization', desc: 'See how the repository is organized at a glance.' },
-      { icon: '💡', title: 'Repository Understanding', desc: 'Conversational explanations of what the repo does.' },
-      { icon: '🚀', title: 'Developer Productivity', desc: 'Onboard to or audit a codebase in minutes, not hours.' },
-      { icon: '🧭', title: 'Repo Intelligence', desc: 'Commit heatmaps, PR velocity, contributor and health signals.' },
+      { icon: '🛰️', title: 'Repository Analysis', desc: 'GitHub-metadata health and activity analysis of a public repo.' },
+      { icon: '💚', title: 'Health Scoring', desc: 'Heuristic 0–100 score from activity, maintenance, community, and stability buckets.' },
+      { icon: '🚌', title: 'Bus Factor', desc: 'Contributor-concentration heuristic from listed GitHub contributions.' },
+      { icon: '📈', title: 'Activity & Velocity', desc: 'Commit heatmaps, recent cadence, PR and issue activity, releases.' },
+      { icon: '📄', title: 'PDF Export', desc: 'Client-side executive PDF of the dashboard metrics and rule-based notes.' },
+      { icon: '🧭', title: 'Language Stats', desc: 'GitHub Linguist byte breakdown — not a source-code architecture graph.' },
     ],
-    stack: ['Python', 'FastAPI', 'React', 'TypeScript', 'LLMs', 'REST APIs', 'Vercel'],
+    stack: ['Next.js', 'React', 'TypeScript', 'Octokit', 'Zustand', 'REST APIs', 'Vercel'],
     decisions: [
-      'Shipped on Vercel with a FastAPI backend — a clean split between the React intelligence surface and the Python AI core.',
-      'Open-source friendly: the engine lives at github.com/sriiverse/RepoRadar.',
-      'Intelligence is layered — summary, then architecture, then deep code explanation — so users descend at their own pace.',
+      'Shipped as a Next.js 14 App Router app on Vercel — UI and GET /api/analyze in one Node runtime.',
+      'Open-source: the engine lives at github.com/sriiverse/RepoRadar.',
+      'Intelligence is GitHub-metadata heuristics (health, bus factor, risk rules) rather than cloning or generating docs from source.',
     ],
     metrics: [
-      { k: 'Input', v: 'Any public repo' },
-      { k: 'Output', v: 'Docs + architecture' },
+      { k: 'Input', v: 'Public GitHub URL' },
+      { k: 'Output', v: 'Health + bus factor' },
       { k: 'Open source', v: 'github.com/sriiverse/RepoRadar' },
     ],
   },
@@ -143,8 +143,11 @@ export const STACK = [
   { name: 'Flask',       group: 'back',  color: '#7C3AED' },
   { name: 'FastAPI',     group: 'back',  color: '#7C3AED' },
   { name: 'REST APIs',   group: 'back',  color: '#7C3AED' },
+  { name: 'Octokit',     group: 'back',  color: '#7C3AED' },
   { name: 'JWT',         group: 'back',  color: '#7C3AED' },
   { name: 'React',       group: 'front', color: '#38BDF8' },
+  { name: 'Next.js',     group: 'front', color: '#38BDF8' },
+  { name: 'Zustand',     group: 'front', color: '#38BDF8' },
   { name: 'TailwindCSS', group: 'front', color: '#38BDF8' },
   { name: 'PostgreSQL',  group: 'data',  color: '#4F46E5' },
   { name: 'MongoDB',     group: 'data',  color: '#4F46E5' },
@@ -175,7 +178,7 @@ export const JOURNEY = [
   { phase: 'Intelligence', title: 'AI Applications',         desc: 'Began shipping applied AI: turning LLMs into product features, not demos.' },
   { phase: 'Ship 01',   title: 'QueryForgeAI',               desc: 'Natural-language SQL + optimization assistant — the first production AI system.' },
   { phase: 'Ship 02',   title: 'Placement Pro+',             desc: 'Placement.OS — structured skill profiles, graph skill-gap, and deterministic 12-week template roadmaps.' },
-  { phase: 'Ship 03',   title: 'RepoRadarAI',                desc: 'GitHub repository intelligence — architecture, docs and health, generated by AI.' },
+  { phase: 'Ship 03',   title: 'RepoRadarAI',                desc: 'GitHub repository health/activity intelligence — metadata scores, bus factor, and PDF export.' },
   { phase: 'Now',       title: 'Current',                    desc: 'Engineering SRIIVERSEAI — building intelligent software that solves real problems.' },
 ];
 
@@ -218,7 +221,7 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['reporadar', 'repo radar', 'github repository', 'repository analysis', 'repo intelligence'],
-    a: 'RepoRadarAI is an AI-powered GitHub repository intelligence platform. Point it at any public repo and it generates architecture insights, auto-documentation, a repository summary, commit heatmaps, PR velocity, contributor distribution and a health score. Open source: github.com/sriiverse/RepoRadar. Live: repoai.sriiverseai.vercel.app',
+    a: 'RepoRadarAI is a GitHub health/activity intelligence tool. Point it at a public repo URL; it pulls GitHub REST metadata (not source files) and returns heuristic health, bus factor, heatmaps, PR/issue activity, language stats, and a PDF. Stack: Next.js 14 + React 18 + TypeScript + Octokit. Open source: github.com/sriiverse/RepoRadar. Live: repoai.sriiverseai.vercel.app',
   },
   {
     q: ['technology', 'technologies', 'stack', 'tech', 'tools', 'what does he know', 'skills', 'languages', 'specialize'],
@@ -226,7 +229,7 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['backend', 'server', 'api', 'backend project', 'show backend'],
-    a: 'Backend engineering is the core. Sudhanshu builds Python services with Flask and FastAPI — REST APIs, JWT auth, business logic and data modelling. Placement Pro+ is Python/Flask-driven in the portfolio card; QueryForgeAI\'s inspected implementation is FastAPI + Uvicorn; RepoRadarAI uses FastAPI behind a React frontend.',
+    a: 'Backend engineering is the core. Sudhanshu builds Python services with Flask and FastAPI — REST APIs, JWT auth, business logic and data modelling. Placement Pro+ is Python/Flask-driven in the portfolio card; QueryForgeAI\'s inspected implementation is FastAPI + Uvicorn; RepoRadarAI\'s inspected implementation is Next.js App Router (GET /api/analyze) plus a React/TypeScript UI — not FastAPI.',
   },
   {
     q: ['architecture', 'system design', 'how does it work', 'explain the architecture', 'how is it built', 'five-layer'],
@@ -242,11 +245,11 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['ai', 'artificial intelligence', 'llm', 'machine learning', 'how does ai'],
-    a: 'AI is applied, not theoretical. QueryForgeAI uses Gemini/Groq (or demo heuristics) over user-provided schema text. Placement Pro+ uses MiniLM embeddings plus a skill graph and templates — not a chat LLM and not a resume parser. RepoRadarAI uses applied models over GitHub repository signals. Ollama is used for local model work. Intelligence is supposed to operate over real product inputs — not invent them.',
+    a: 'AI is applied, not theoretical. QueryForgeAI uses Gemini/Groq (or demo heuristics) over user-provided schema text. Placement Pro+ uses MiniLM embeddings plus a skill graph and templates — not a chat LLM and not a resume parser. RepoRadarAI currently uses deterministic GitHub-metadata heuristics (health, bus factor, risk rules) — not a generative model over repository source. Ollama is used for local model work elsewhere in the practice. Intelligence is supposed to operate over real product inputs — not invent them.',
   },
   {
     q: ['project', 'projects', 'work', 'portfolio', 'what has he built'],
-    a: 'Three production systems: 1) QueryForgeAI — SQL/Mongo generator and optimizer (Gemini/Groq or demo heuristics). 2) Placement Pro+ — Placement.OS with graph skill-gap and 12-week template roadmaps. 3) RepoRadarAI — GitHub repository intelligence. All are live; scroll to the Work section for deep dives.',
+    a: 'Three production systems: 1) QueryForgeAI — SQL/Mongo generator and optimizer (Gemini/Groq or demo heuristics). 2) Placement Pro+ — Placement.OS with graph skill-gap and 12-week template roadmaps. 3) RepoRadarAI — GitHub metadata health/activity intelligence (Octokit + heuristics). All are live; scroll to the Work section for deep dives.',
   },
 ];
 
@@ -279,6 +282,7 @@ export const SKILLS_TAXONOMY = [
   { canonical: 'REST APIs', aliases: ['rest api', 'rest apis', 'restful', 'rest', 'api design'] },
   { canonical: 'JWT', aliases: ['jwt', 'json web token'] },
   { canonical: 'React', aliases: ['react', 'reactjs', 'react.js'] },
+  { canonical: 'Next.js', aliases: ['next.js', 'nextjs', 'next js'] },
   { canonical: 'TailwindCSS', aliases: ['tailwind', 'tailwindcss'] },
   { canonical: 'PostgreSQL', aliases: ['postgresql', 'postgres', 'psql', 'sql'] },
   { canonical: 'MongoDB', aliases: ['mongodb', 'mongo', 'nosql'] },

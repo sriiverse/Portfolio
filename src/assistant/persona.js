@@ -171,7 +171,7 @@ export const TECH_TAKES = [
     category: 'backend-framework',
     techs: ['Flask', 'FastAPI'],
     preference:
-      "For a new API-first service — especially one doing async I/O, like RepoRadarAI's GitHub ingestion — FastAPI is the default. Flask stays the right call when I want a smaller surface and full control over the request lifecycle, which is closer to what Placement Pro+'s backend + AI orchestration needed. QueryForgeAI's inspected cloud backend is FastAPI + Uvicorn (not Flask).",
+      "For a new API-first Python service — especially I/O-heavy cloud APIs, like QueryForgeAI's inspected FastAPI + Uvicorn backend — FastAPI is the default. Flask stays the right call when I want a smaller surface and full control over the request lifecycle, which is closer to what Placement Pro+'s backend + AI orchestration needed. RepoRadarAI's inspected implementation is Next.js App Router, not FastAPI.",
     dimensions: [
       { name: 'Performance', a: 'Synchronous by default (WSGI); very fast for typical CRUD, but I/O-bound concurrency needs extra workers/threads.', b: 'Async-native (ASGI/Starlette); handles high-concurrency I/O-bound workloads without extra process tricks.' },
       { name: 'Validation', a: 'No built-in schema validation — needs an add-on (marshmallow, manual checks, or Pydantic bolted on).', b: 'Pydantic is built in — request/response validation comes for free from type hints.' },
@@ -182,7 +182,6 @@ export const TECH_TAKES = [
     evidence: [
       { project: 'placementpro', tech: 'Flask' },
       { project: 'queryforge', tech: 'FastAPI' },
-      { project: 'reporadar', tech: 'FastAPI' },
     ],
   },
   {

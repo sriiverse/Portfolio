@@ -92,12 +92,10 @@ test('alternatives never claim rejection', () => {
   }
 });
 
-test('FastAPI on RepoRadar gets tradeoffs vs Flask from TECH_TAKES', () => {
+test('Next.js on RepoRadar is linked from graph project stack', () => {
   const list = getDecisionsForProject('reporadar', graph);
-  const withFastApi = list.find((r) => r.chosen === 'FastAPI' || r.relatedTechs.includes('FastAPI') || /FastAPI/i.test(r.rawText));
-  assert(withFastApi, 'expected a RepoRadar decision mentioning FastAPI');
-  assert(withFastApi.tradeoffs.length > 0, 'expected TECH_TAKES tradeoffs');
-  assert(withFastApi.alternatives.some((a) => a.tech === 'Flask'), 'expected Flask alternative');
+  const withNext = list.find((r) => r.chosen === 'Next.js' || r.relatedTechs.includes('Next.js') || /Next\.js/i.test(r.rawText));
+  assert(withNext, 'expected a RepoRadar decision mentioning Next.js');
 });
 
 test('wouldChooseAgain is unknown or inferred — never fabricated yes', () => {

@@ -67,10 +67,10 @@ export function scoreProjectConsistency({ text, context = {} }) {
   }
 
   // Stack attribution consistency: QueryForge cloud backend is FastAPI (CODE-PROVEN);
-  // RepoRadar is FastAPI; do not attribute Flask exclusively to QueryForge.
+  // RepoRadar is Next.js + Octokit; Placement Pro+ is Flask.
   const stackMap = context.projectStackMap || {
     queryforge: [/fastapi/i, /sql/i, /gemini/i],
-    reporadar: [/fastapi/i, /react/i, /typescript/i],
+    reporadar: [/next\.js/i, /react/i, /typescript/i, /octokit/i],
     placementpro: [/flask/i, /python/i],
   };
 
@@ -83,10 +83,15 @@ export function scoreProjectConsistency({ text, context = {} }) {
       notes.push('stack-mismatch:queryforge-flask');
       suggestions.push('QueryForgeAI’s inspected cloud backend is FastAPI + Uvicorn; don’t attribute Flask to it as current FACT.');
     }
+    if (hit.id === 'reporadar' && /\bRepoRadar\w*\b[^.!?]{0,80}\bFastAPI\b/i.test(t) && !/\bnot FastAPI|not a Python|inspected implementation is Next/i.test(t)) {
+      score -= 1.5;
+      notes.push('stack-mismatch:reporadar-fastapi');
+      suggestions.push('RepoRadar’s inspected implementation is Next.js App Router + Octokit, not FastAPI.');
+    }
     if (hit.id === 'reporadar' && /\bRepoRadar\w*\b[^.!?]{0,60}\bFlask\b/i.test(t) && !/\bQueryForge/i.test(t)) {
       score -= 1.5;
       notes.push('stack-mismatch:reporadar-flask');
-      suggestions.push('RepoRadar uses FastAPI for async ingestion; don’t attribute Flask to it alone.');
+      suggestions.push('RepoRadar is Next.js + Octokit; don’t attribute Flask to it alone.');
     }
   }
 

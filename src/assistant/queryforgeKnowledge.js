@@ -361,7 +361,8 @@ export const QUERYFORGE_FACETS = [
 export function hasQueryForgeSignal(query) {
   const t = String(query || '');
   if (isQueryForgeQuery(t)) return true;
-  if (/schema_def|generate-sql|sql-optimizer-backend|gemini-flash-latest|\/analyze\b/i.test(t)) return true;
+  if (/schema_def|generate-sql|sql-optimizer-backend|gemini-flash-latest/i.test(t)) return true;
+  if (/\/analyze\b/i.test(t) && /queryforge|optimizer|generate-sql|sql/i.test(t) && !/reporadar/i.test(t)) return true;
   if (/when gemini fails|gemini fail|gemini .{0,20}429|gemini .{0,24}(fallback|groq)/i.test(t)) return true;
   if (/\bgemini\b/i.test(t) && /\b(fail|fails|failed|429|fallback|groq)\b/i.test(t)) return true;
   if (/explain analyze/i.test(t) && /\b(optimizer|queryforge|sql)\b/i.test(t)) return true;
@@ -379,6 +380,9 @@ export function matchQueryForgeFacet(query) {
   const t = String(query || '').toLowerCase();
   if (!t.trim()) return null;
   if (/placement.?pro|placementpro|minilm|all-minilm/i.test(t) && !/queryforge|schema_def|generate-sql/i.test(t)) {
+    return null;
+  }
+  if (/reporadar|repo.?radar/i.test(t) && !isQueryForgeQuery(t)) {
     return null;
   }
 

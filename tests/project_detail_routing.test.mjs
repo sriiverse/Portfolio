@@ -187,6 +187,37 @@ test('Placement Pro+ engineering detail is not brochure', async () => {
   assert(!/Resume Analysis/i.test(out.text), 'no resume brochure');
 });
 
+test('RepoRadar engineering detail is not brochure', async () => {
+  const q = 'Does RepoRadar use an LLM?';
+  assert(isEngineeringDetailQuery(q), 'llm q is engineering detail');
+  assert(!isGenuineProjectOverviewQuery(q), 'not overview');
+  const frame = buildQuestionFrame(q, {});
+  const r = classifyReasoningStrategy(q, { questionFrame: frame, memory: {} });
+  assert(r.task === 'reporadar_detail', `got ${r.task}`);
+  const out = await render(q);
+  assert(out.kind !== 'project-card', `kind=${out.kind}`);
+  assert(out?.payload?._portfolioIntelligence === 'reporadar_detail', `intel=${out?.payload?._portfolioIntelligence}`);
+  assert(/does not use a generative AI model/i.test(out.text), 'no-llm fact');
+  assert(!/X-ray vision/i.test(out.text), 'no x-ray brochure');
+});
+
+test('RepoRadar overview → How does it work? stays on CODE-PROVEN facets', () => {
+  const mem = {
+    lastProject: 'reporadar',
+    lastCommitment: { projectId: 'reporadar', name: 'RepoRadarAI', task: 'project_overview' },
+    activeMode: 'project_overview',
+  };
+  const follow = 'How does it work? RepoRadarAI';
+  const frame = buildQuestionFrame(follow, { focusProject: 'reporadar', memory: mem });
+  const r = classifyReasoningStrategy(follow, { questionFrame: frame, memory: mem });
+  assert(r.task === 'reporadar_detail', `task=${r.task}`);
+  assert(r.task !== 'arch_why', 'must not use generic five-layer arch_why');
+  const text = synthesizeReasoning(r, follow, { questionFrame: frame, memory: mem });
+  assert(/Next\.js|Octokit|\/api\/analyze|GitHub/i.test(text), `expected RR facet facts in: ${text.slice(0, 200)}`);
+  assert(!/five-layer split/i.test(text), 'must not dump generic five-layer spine');
+  assert(!/FastAPI \+ Uvicorn/i.test(text), 'must not claim FastAPI');
+});
+
 test('Placement Pro+ overview → How does it work? stays on CODE-PROVEN facets', () => {
   const mem = {
     lastProject: 'placementpro',

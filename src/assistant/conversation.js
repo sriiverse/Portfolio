@@ -213,6 +213,9 @@ export function isBoundFollowUpQuery(query) {
   if (/^how (does|did|do|is|was) (it|that|this|the architecture)\b/i.test(t)) return true;
   if (/^how does it work\??$/i.test(t)) return true;
   if (/^how is that generated\??$/i.test(t)) return true;
+  if (/^how is (that|it|this) calculated\??$/i.test(t)) return true;
+  if (/^what (does|did) (it|that) (actually )?fetch\??$/i.test(t)) return true;
+  if (/^why did you choose that\??$/i.test(t)) return true;
   if (/^what model does (that|it|this) use\??$/i.test(t)) return true;
   if (/^why (that |this )?(architecture|stack|design|choice)\??$/i.test(t)) return true;
   if (/^what (database|db|stack|frontend|backend) does it use\??$/i.test(t)) return true;

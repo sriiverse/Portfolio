@@ -42,7 +42,7 @@ const IMPL_LEAKS = [
 
 /** Multi-char / unambiguous absent techs only — never single common English words. */
 const ABSENT_TECH = [
-  'Kubernetes', 'Django', 'Redis', 'Next.js', 'Vite', 'GraphQL', 'Kafka',
+  'Kubernetes', 'Django', 'Redis', 'Vite', 'GraphQL', 'Kafka',
   'Terraform', 'Spring Boot', 'Angular',
 ];
 
@@ -242,10 +242,11 @@ function checkEvidence(pack) {
 
   // Implementation/RAG voice is never valid evidence framing.
   // MiniLM / skill-gap "embedding" is CODE-PROVEN product vocabulary, not a RAG leak.
-  const codeProvenTask = /^(placementpro|queryforge)_(detail|unknown)$/.test(String(pack.task || ''));
+  const codeProvenTask = /^(placementpro|queryforge|reporadar)_(detail|unknown)$/.test(String(pack.task || ''));
   const technicalEmbedding = /minilm|sentence.?transform|cosine simil|skill.?gap|graph node|vector initialization|all-minilm/i.test(text);
   for (const re of IMPL_LEAKS) {
     if (re.source.includes('embeddings') && (codeProvenTask || technicalEmbedding)) continue;
+    if (re.source.includes('RAG') && codeProvenTask) continue;
     if (re.test(text)) issues.push(`implementation-voice leak: /${re.source}/`);
   }
 
@@ -462,7 +463,7 @@ function applyAmendments(pack, checks) {
 
   // 1. Strip any remaining implementation-voice leaks.
   if (!checks.evidence.ok && checks.evidence.issues.some((i) => /implementation-voice/.test(i))) {
-    const cleaned = scrubImplLeaks(text);
+    const cleaned = scrubImplLeaks(text, pack.task);
     if (cleaned !== text) {
       text = cleaned;
       actions.push({ type: 'scrub-impl-voice', reason: 'removed RAG/documentation-export phrasing' });
@@ -519,15 +520,18 @@ function applyAmendments(pack, checks) {
   return { text, actions };
 }
 
-function scrubImplLeaks(text) {
+function scrubImplLeaks(text, task) {
   let t = String(text || '');
+  const codeProvenTask = /^(placementpro|queryforge|reporadar)_(detail|unknown)$/.test(String(task || ''));
   t = t.replace(/\*{0,2}Based on what is documented:\*{0,2}\s*/gi, '');
   t = t.replace(/\*{0,2}From his portfolio:\*{0,2}\s*/gi, '');
   t = t.replace(/\bretrieval-and-reasoning layer\b/gi, 'portfolio assistant');
   t = t.replace(/\bknowledge base\b/gi, 'portfolio');
-  t = t.replace(/\bRAG\b/g, 'portfolio reasoning');
-  if (!/minilm|sentence.?transform|cosine simil|skill.?gap|graph node|vector initialization|all-minilm/i.test(t)) {
-    t = t.replace(/\bembeddings?\b/gi, 'portfolio content');
+  if (!codeProvenTask) {
+    t = t.replace(/\bRAG\b/g, 'portfolio reasoning');
+    if (!/minilm|sentence.?transform|cosine simil|skill.?gap|graph node|vector initialization|all-minilm/i.test(t)) {
+      t = t.replace(/\bembeddings?\b/gi, 'portfolio content');
+    }
   }
   return t.trim();
 }

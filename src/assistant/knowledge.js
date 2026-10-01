@@ -10,6 +10,7 @@
 import { PROFILE, PROJECTS, STACK, ARCHITECTURE, JOURNEY, ASSISTANT_KB } from '../content.js';
 import { getQueryForgeFacetDocs } from './queryforgeKnowledge.js';
 import { getPlacementProFacetDocs } from './placementproKnowledge.js';
+import { getRepoRadarFacetDocs } from './reporadarKnowledge.js';
 
 /* ============================================================
    TEXT UTILITIES
@@ -242,6 +243,23 @@ getQueryForgeFacetDocs().forEach((f) => {
 
 // Placement Pro+ CODE-PROVEN engineering facets (Phase 2B)
 getPlacementProFacetDocs().forEach((f) => {
+  addDoc({
+    id: f.id,
+    kind: f.kind,
+    projectId: f.projectId,
+    facet: f.facet,
+    depth: f.depth,
+    confidence: f.confidence,
+    title: f.title,
+    text: f.text,
+    tags: stemSet(f.tagsText),
+    source: f.source,
+    link: f.link,
+  });
+});
+
+// RepoRadarAI CODE-PROVEN engineering facets (Phase 2C)
+getRepoRadarFacetDocs().forEach((f) => {
   addDoc({
     id: f.id,
     kind: f.kind,

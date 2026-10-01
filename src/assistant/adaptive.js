@@ -191,7 +191,8 @@ function pickReflectionPhrase(ctx) {
   const task = String(ctx?.payload?._portfolioIntelligence || '');
   if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
     || task === 'queryforge_detail' || task === 'queryforge_unknown'
-    || task === 'placementpro_detail' || task === 'placementpro_unknown') return null;
+    || task === 'placementpro_detail' || task === 'placementpro_unknown'
+    || task === 'reporadar_detail' || task === 'reporadar_unknown') return null;
 
   const memory = ctx.memory;
   const turnCount = memory?.turnCount ?? (memory?.turns?.length || 0);
@@ -293,14 +294,15 @@ export function pickContextualInvite(ctx = {}, move = 'Answer') {
 
   if (task === 'undocumented_detail' || task === 'honest_unknown'
     || task === 'queryforge_detail' || task === 'queryforge_unknown'
-    || task === 'placementpro_detail' || task === 'placementpro_unknown') return null;
+    || task === 'placementpro_detail' || task === 'placementpro_unknown'
+    || task === 'reporadar_detail' || task === 'reporadar_unknown') return null;
   if (wantsDirectAnswerOnly(q)) return null;
 
   if (task === 'why_flask' || /\bwhy flask\b/i.test(q)) {
     return 'Want to compare it with FastAPI, or see how that decision shaped the architecture?';
   }
   if (task === 'why_fastapi' || /\bwhy fastapi\b/i.test(q)) {
-    return 'Want the Flask contrast, or how async ingestion pushed this choice on RepoRadar?';
+    return 'Want the Flask contrast, or QueryForgeAI’s FastAPI + Uvicorn cloud path?';
   }
   if (task === 'why_react' || /\bwhy react\b/i.test(q)) {
     return 'Want the trade-offs vs other UI stacks, or how React shows up on a specific project?';
@@ -342,7 +344,7 @@ export function pickContextualInvite(ctx = {}, move = 'Answer') {
     return 'Interested in why I chose this architecture, or the hardest engineering problem I solved there?';
   }
   if (topic?.id === 'reporadar') {
-    return 'Want to explore the AI pipeline or the backend architecture?';
+    return 'Want the GitHub REST caps, or how the health/bus-factor heuristics are calculated?';
   }
   if (topic?.id === 'placementpro') {
     return 'Want the product workflow story, or the backend decisions behind it?';
@@ -520,7 +522,7 @@ function applyAnswerShapeBudget(text, ctx = {}) {
   // Default conversation length: ~4–8 sentences unless explicit expansion/docs.
   // CODE-PROVEN project facets must not be sentence-reassembled (decimals /
   // dotted identifiers like 0.60 and nx.shortest_path).
-  const preserveCodeProven = /^(placementpro|queryforge)_(detail|unknown)$/.test(task);
+  const preserveCodeProven = /^(placementpro|queryforge|reporadar)_(detail|unknown)$/.test(task);
   const wantsExpand = wantsDocs
     || /\b(more detail|go deeper|elaborate|expand|full (explanation|write-?up)|everything about)\b/i.test(q)
     || isBoundFollowUpQuery(q);
@@ -648,7 +650,8 @@ export function applyConversationFlow(text, ctx = {}) {
   const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
   if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
     || task === 'queryforge_detail' || task === 'queryforge_unknown'
-    || task === 'placementpro_detail' || task === 'placementpro_unknown') {
+    || task === 'placementpro_detail' || task === 'placementpro_unknown'
+    || task === 'reporadar_detail' || task === 'reporadar_unknown') {
     return out.replace(/\n{3,}/g, '\n\n').trim();
   }
   if (!endsWithQuestion(out)) {

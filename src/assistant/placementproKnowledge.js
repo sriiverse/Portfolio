@@ -496,6 +496,7 @@ export function matchPlacementProFacet(query) {
   const t = String(query || '').toLowerCase();
   if (!t.trim()) return null;
   if (/queryforge|schema_def|generate-sql/i.test(t) && !isPlacementProQuery(t)) return null;
+  if (/reporadar|repo.?radar/i.test(t) && !isPlacementProQuery(t)) return null;
 
   const scoped = hasPlacementProSignal(t);
 
