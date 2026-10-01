@@ -261,6 +261,39 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   const boundId = mem?.lastCommitment?.projectId || mem?.lastProject || null;
   const prevTask = mem?.activeMode || mem?.lastCommitment?.task || '';
   if (boundId && isBoundFollowUpQuery(query)) {
+    const qfBound = boundId === 'queryforge' || /queryforge/i.test(String(boundId));
+
+    // QueryForgeAI: stay on CODE-PROVEN facets — never generic five-layer arch_why
+    // (that spine still names Flask and would contradict the inspected FastAPI backend).
+    if (qfBound) {
+      if (/hardest/i.test(t)) {
+        return { strategy: 'Explain', task: 'probe_hardest' };
+      }
+      if (/improve|change|rebuild|trade-?off|why that architecture|why this architecture|why .{0,12}architecture|lessons learned|design intent/i.test(t)
+        && !/\bhow (does|is|was|did)\b/i.test(t)) {
+        return { strategy: 'Summarize', task: 'queryforge_unknown' };
+      }
+      if (/flask/i.test(t) && !/fastapi|built with|is .{0,20}flask/i.test(t)) {
+        // Explicit Flask ask while on QueryForge → architecture facet (FastAPI correction).
+        return { strategy: 'Summarize', task: 'queryforge_detail', focus: 'qf-architecture' };
+      }
+
+      let focus = 'qf-dataflow-overview';
+      if (/optim|explain\s*analyze|\/analyze|execution plan/i.test(t)) {
+        focus = 'qf-dataflow-optimizer';
+      } else if (/generat|schema_def|\bschema\b|natural.?language|sql from|final sql/i.test(t)) {
+        focus = 'qf-dataflow-generator';
+      } else if (/architect|built|designed|structured|tech stack|\bstack\b|fastapi|uvicorn|netlify|render|flask/i.test(t)) {
+        focus = 'qf-architecture';
+      } else if (/how\b|how does|how did|how is|work\??$/i.test(t)) {
+        focus = 'qf-dataflow-overview';
+      }
+
+      if (/how\b|how does|how did|how is|work\??$|architect|built|designed|structured|generat|optim|schema|fastapi|stack|explain\s*analyze|\/analyze/i.test(t)) {
+        return { strategy: 'Summarize', task: 'queryforge_detail', focus };
+      }
+    }
+
     if (/hardest/i.test(t)) {
       return { strategy: 'Explain', task: 'probe_hardest' };
     }

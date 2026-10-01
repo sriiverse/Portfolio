@@ -42,7 +42,7 @@ export const PROJECTS = [
     problem:
       'Writing efficient SQL is hard. Developers hand-write queries, hit slow execution plans, and then reverse-engineer why a query is slow — without tooling that actually explains or optimizes the SQL for them.',
     solution:
-      'QueryForgeAI turns natural language into SQL, then dissects execution plans, surfaces bottlenecks and rewrites inefficient queries instantly. It is part query generator, part optimization engine, part always-on database assistant.',
+      'QueryForgeAI turns natural language plus user-provided schema/DDL text into SQL or Mongo queries, then analyzes pasted SQL/pipelines with Gemini (or demo heuristics) to return explanations, suggestions, and plan-shaped summaries. On the free cloud path it does not connect to a live database or execute real EXPLAIN/EXPLAIN ANALYZE.',
     features: [
       { icon: '💬', title: 'Natural Language → SQL', desc: 'Describe what you want in plain English; get executable SQL.' },
       { icon: '⚡', title: 'SQL Optimization', desc: 'Analyze pasted SQL/pipelines and surface optimization suggestions.' },
@@ -58,7 +58,7 @@ export const PROJECTS = [
       'Cloud optimizer returns explanation + plan-shaped JSON from Gemini/demo heuristics; it does not execute real EXPLAIN against a user database.',
     ],
     metrics: [
-      { k: 'Optimization', v: 'Execution-plan aware' },
+      { k: 'Optimization', v: 'AI / heuristic analysis' },
       { k: 'Interface', v: 'Natural language + SQL' },
       { k: 'Surface', v: 'Modern dashboard' },
     ],

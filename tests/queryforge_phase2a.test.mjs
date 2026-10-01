@@ -135,6 +135,8 @@ test('content.js QueryForge stack is FastAPI not Flask', () => {
   const qf = PROJECTS.find((p) => p.id === 'queryforge');
   assert(qf.stack.includes('FastAPI'), 'FastAPI in stack');
   assert(!qf.stack.includes('Flask'), 'Flask removed from stack');
+  assert(!/dissects execution plans|live schema/i.test(qf.solution), 'solution not stale');
+  assert(!/live database introspection|reasons over the live/i.test(qf.features.map((f) => f.desc).join(' ')), 'features not live-schema');
 });
 
 test('retrieval prefers project-detail facets for schema questions', () => {
