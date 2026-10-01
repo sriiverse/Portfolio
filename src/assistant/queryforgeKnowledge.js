@@ -378,6 +378,9 @@ export function hasQueryForgeSignal(query) {
 export function matchQueryForgeFacet(query) {
   const t = String(query || '').toLowerCase();
   if (!t.trim()) return null;
+  if (/placement.?pro|placementpro|minilm|all-minilm/i.test(t) && !/queryforge|schema_def|generate-sql/i.test(t)) {
+    return null;
+  }
 
   const scoped = hasQueryForgeSignal(t);
   const designIntent = /why .{0,48}(fastapi|flask|gemini|groq|netlify|render).{0,32}(chosen|choose|chose|picked|prefer)|why (was|is|did).{0,24}(fastapi|flask|gemini|netlify|render)\b|why fastapi|why gemini|why netlify|why render|design intent|hardest engineering|lessons learned/i.test(t);

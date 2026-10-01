@@ -36,6 +36,12 @@ import {
   matchQueryForgeFacet,
   QUERYFORGE_FACETS,
 } from './queryforgeKnowledge.js';
+import {
+  isPlacementProQuery,
+  isStandalonePlacementAuthQuery,
+  matchPlacementProFacet,
+  PLACEMENTPRO_FACETS,
+} from './placementproKnowledge.js';
 
 export const REASONING_STRATEGIES = [
   'Describe', 'Explain', 'Compare', 'Recommend', 'Evaluate',
@@ -248,7 +254,22 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (mode === 'intro') {
     return { strategy: 'Summarize', task: 'self_intro' };
   }
+  const mem = ctx?.memory;
+  const boundId = mem?.lastCommitment?.projectId || mem?.lastProject || null;
+  const prevTask = mem?.activeMode || mem?.lastCommitment?.task || '';
+  const ppBoundEarly = boundId === 'placementpro' || /placement/i.test(String(boundId));
+  const ppQueryEarly = isPlacementProQuery(t) || ppBoundEarly;
+
   if (mode === 'probe') {
+    if (/hardest/i.test(t) && ppQueryEarly) {
+      return { strategy: 'Summarize', task: 'placementpro_unknown' };
+    }
+    if (/scale|qps|rps/i.test(t) && ppQueryEarly) {
+      return { strategy: 'Summarize', task: 'placementpro_unknown' };
+    }
+    if (/failure mode/i.test(t) && ppQueryEarly) {
+      return { strategy: 'Summarize', task: 'placementpro_detail', focus: 'pp-failure' };
+    }
     if (/failure mode/i.test(t)) return { strategy: 'Explain', task: 'probe_failure_modes' };
     if (/scale|qps|rps/i.test(t)) return { strategy: 'Explain', task: 'probe_scale' };
     if (/complexity/i.test(t)) return { strategy: 'Explain', task: 'probe_complexity' };
@@ -257,11 +278,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   }
 
   // --- V4.5 Mod 2: bound follow-ups inherit prior commitment ---
-  const mem = ctx?.memory;
-  const boundId = mem?.lastCommitment?.projectId || mem?.lastProject || null;
-  const prevTask = mem?.activeMode || mem?.lastCommitment?.task || '';
   if (boundId && isBoundFollowUpQuery(query)) {
     const qfBound = boundId === 'queryforge' || /queryforge/i.test(String(boundId));
+    const ppBound = boundId === 'placementpro' || /placement/i.test(String(boundId));
 
     // QueryForgeAI: stay on CODE-PROVEN facets — never generic five-layer arch_why
     // (that spine still names Flask and would contradict the inspected FastAPI backend).
@@ -291,6 +310,39 @@ export function classifyReasoningStrategy(query, ctx = {}) {
 
       if (/how\b|how does|how did|how is|work\??$|architect|built|designed|structured|generat|optim|schema|fastapi|stack|explain\s*analyze|\/analyze/i.test(t)) {
         return { strategy: 'Summarize', task: 'queryforge_detail', focus };
+      }
+    }
+
+    if (ppBound) {
+      if (/hardest/i.test(t)) {
+        return { strategy: 'Summarize', task: 'placementpro_unknown' };
+      }
+      if (/improve|change|rebuild|trade-?off|why that architecture|why this architecture|why .{0,12}architecture|lessons learned|design intent|why (did|do) you choose|why that\??$|why flask|why minilm|why networkx/i.test(t)
+        && !/\bhow (does|is|was|did)\b/i.test(t)) {
+        return { strategy: 'Summarize', task: 'placementpro_unknown' };
+      }
+
+      let focus = 'pp-architecture';
+      if (/roadmap|generat/i.test(t)) {
+        focus = 'pp-roadmap';
+      } else if (/model|minilm|llm|embedding|sentence.?transform/i.test(t)) {
+        focus = 'pp-ai-model';
+      } else if (/skill.?gap|graph|shortest|missing skill/i.test(t)) {
+        focus = 'pp-skill-gap';
+      } else if (/auth|jwt|login|register|token/i.test(t)) {
+        focus = 'pp-auth';
+      } else if (/database|sql|persist|postgres|sqlite/i.test(t)) {
+        focus = 'pp-database';
+      } else if (/compan|job.?board/i.test(t)) {
+        focus = 'pp-company';
+      } else if (/cache|redis/i.test(t)) {
+        focus = 'pp-caching';
+      } else if (/how\b|how does|how did|how is|work\??$/i.test(t)) {
+        focus = 'pp-architecture';
+      }
+
+      if (/how\b|how does|how did|how is|work\??$|architect|built|designed|structured|generat|model|skill|graph|auth|database|stack|compan|cache|roadmap|minilm|llm/i.test(t)) {
+        return { strategy: 'Summarize', task: 'placementpro_detail', focus };
       }
     }
 
@@ -351,7 +403,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
 
   if (/weakest|weak area|biggest weakness|limitation|where could (he|sudhanshu) improve|what.*(lack|missing (?!skill))|areas? (to|for) improve/i.test(t)
     || (/improve/i.test(t) && /where|what|area/i.test(t))) {
-    return { strategy: 'Critique', task: 'weakest_area' };
+    if (!isPlacementProQuery(t) && !isQueryForgeQuery(t)) {
+      return { strategy: 'Critique', task: 'weakest_area' };
+    }
   }
   if (/learn next|should (he|sudhanshu) learn|gaps to (close|fill)|should i learn|what should i learn|build systems like this/i.test(t)) {
     return { strategy: 'Critique', task: 'learn_next' };
@@ -444,6 +498,24 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     }
     if (facet && facet.confidence === 'documented') {
       return { strategy: 'Summarize', task: 'queryforge_detail', focus: facet.id };
+    }
+  }
+
+  {
+    const facet = matchPlacementProFacet(t);
+    const otherProjectBound = boundId
+      && boundId !== 'placementpro'
+      && !/placement/i.test(String(boundId))
+      && !isPlacementProQuery(t);
+    const stealAuth = otherProjectBound && isStandalonePlacementAuthQuery(t);
+    const designIntent = /why .{0,48}(flask|minilm|networkx|netlify|render|huggingface).{0,32}(chosen|choose|chose|picked|prefer)|why (was|is|did).{0,24}(flask|minilm|networkx|netlify|render)\b|why flask|why minilm|why networkx/i.test(t)
+      || (isPlacementProQuery(t) && /why (was|is|did).{0,40} chosen|hardest|lessons learned|what would you improve|design intent|trade-?off/i.test(t));
+
+    if (!stealAuth && (facet?.confidence === 'unknown' || (designIntent && isPlacementProQuery(t)))) {
+      return { strategy: 'Summarize', task: 'placementpro_unknown' };
+    }
+    if (!stealAuth && facet && facet.confidence === 'documented') {
+      return { strategy: 'Summarize', task: 'placementpro_detail', focus: facet.id };
     }
   }
 
@@ -556,6 +628,9 @@ export function isEngineeringDetailQuery(query) {
     || /\bwalk (me )?through .{0,60}(flow|pipeline|from .{0,30}(input|user)|generat)/i.test(t)
     || /\bwhere does (the )?(database )?schema come from\b/i.test(t)
     || /\b(live database|connect to or inspect)\b/i.test(t)
+    || /\b(skill.?gap|knowledge graph|minilm|networkx|cosine similarity)\b/i.test(t)
+    || /\b(authentication|jwt|company matching|roadmap)\b/i.test(t)
+    || /\bdoes (it|placement).{0,24}use (an? )?(llm|knowledge graph)\b/i.test(t)
   );
 }
 
@@ -837,7 +912,7 @@ function opConversationMode(ctx, { task }) {
     return speak(ctx.strategy,
       `Main AI-layer failure modes I'd worry about: schema drift breaking NL→SQL, overconfident rewrites, and latency under cold LLM starts.`,
       `On ${nm(qf)} the guard is treating the model as a reasoning layer over the real schema — not a blind generator — and surfacing explanations instead of silent rewrites.`,
-      `${nm(rr)} adds API/rate-limit and shallow-summary failure modes; ${nm(pp)} fails when resume parsing is weak and advice goes generic.`);
+      `${nm(rr)} adds API/rate-limit and shallow-summary failure modes; ${nm(pp)} fails when embeddings/graph mapping miss the profile skills or the caller hits the user_id/JWT identity gap.`);
   }
 
   if (task === 'probe_scale') {
@@ -865,9 +940,9 @@ function opConversationMode(ctx, { task }) {
     }
     if (focus?.id === 'placementpro') {
       return speak(ctx.strategy,
-        `Hardest part on ${nm(focus)} was keeping advice resume-anchored — specific gaps and roadmaps instead of generic career tips.`,
-        `If parsing is weak, the whole product goes soft. Grounding was the real fight.`,
-        `That's what I had to get right.`);
+        `That “hardest part” for ${nm(focus)} is not documented as CODE-PROVEN FACT.`,
+        `I will not invent a resume-parsing fight or another architecture story to fill the gap.`,
+        `Ask about verified mechanics instead: MiniLM mapping, the NetworkX path, template roadmaps, JWT auth, or what is not persisted.`);
     }
     return speak(ctx.strategy,
       `Hardest part on ${nm(focus)} was grounding — making SQL and explanations stay honest against a real schema, not the model call itself.`,
@@ -908,7 +983,7 @@ function opInfer(ctx, { task }) {
     return speak(
       ctx.strategy,
       `I'm product-capable, with engineering as the primary identity.`,
-      `${nm(pp)} especially shows product workflow thinking (resume → gaps → roadmap). Overall I read as an engineer who ships products — not a PM who codes.`,
+      `${nm(pp)} especially shows product workflow thinking (structured profile → graph gaps → template roadmap). Overall I read as an engineer who ships products — not a PM who codes.`,
       `Hire me to build the system; treat product judgment as a bonus, not the main signal.`,
     );
   }
@@ -1138,6 +1213,26 @@ function opSummarize(ctx, { task }) {
     ].join('\n\n');
   }
 
+  if (task === 'placementpro_detail' || task === 'placementpro_unknown') {
+    const focusedId = ctx.classification?.focus;
+    const facet = (focusedId && PLACEMENTPRO_FACETS.find((f) => f.id === focusedId))
+      || matchPlacementProFacet(ctx.query);
+    if (task === 'placementpro_unknown' || facet?.confidence === 'unknown') {
+      return [
+        `That design-intent detail for **Placement Pro+** is not documented as CODE-PROVEN FACT.`,
+        `I will not invent why Flask, MiniLM, or NetworkX were chosen, or undocumented “hardest problem / improve next / lessons learned” stories.`,
+        `I can answer verified mechanics instead: structured profile → MiniLM/graph skill-gap, deterministic 12-week templates, JWT auth, SQLite/Postgres persistence boundaries, and in-memory company matching.`,
+      ].join('\n\n');
+    }
+    if (facet?.text) {
+      return facet.text;
+    }
+    return [
+      `I don't have a verified facet for that Placement Pro+ detail yet.`,
+      `Ask about skill-gap, MiniLM, the NetworkX graph, roadmap templates, auth, caching, or what is not persisted.`,
+    ].join('\n\n');
+  }
+
   if (task === 'self_intro') {
     const subject = ctx.identity.subject;
     return [
@@ -1309,7 +1404,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   };
 
   // --- Summarize / identity ---
-  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown', 'undocumented_detail', 'queryforge_detail', 'queryforge_unknown'].includes(task)) {
+  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown', 'undocumented_detail', 'queryforge_detail', 'queryforge_unknown', 'placementpro_detail', 'placementpro_unknown'].includes(task)) {
     if (task === 'preference_gap') return opConversationMode(opCtx, { task });
     return opSummarize(opCtx, { task });
   }
@@ -1416,7 +1511,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
       const pp = byId('placementpro');
       return speak(strategy,
         `For AI engineering depth, I'd highlight ${nm(ranked[0])} first.`,
-        `All three use LLMs, but they demonstrate different muscles: schema-aware correctness (${nm(qf)}), layered repo intelligence (${nm(rr)}), and resume-grounded planning (${nm(pp)}).`,
+        `The three ships show different intelligence muscles: schema-aware SQL generation (${nm(qf)}), layered repo intelligence (${nm(rr)}), and MiniLM/graph skill-gap templates (${nm(pp)}) — not three copies of the same chat LLM.`,
         `${nm(qf)} wins when "AI engineering" means grounding and correctness; ${nm(rr)} wins when it means productized, demoable intelligence layers.`,
       );
     }

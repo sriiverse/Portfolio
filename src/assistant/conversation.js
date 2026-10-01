@@ -212,9 +212,11 @@ export function isBoundFollowUpQuery(query) {
   if (/^(and )?how\??$/i.test(t)) return true;
   if (/^how (does|did|do|is|was) (it|that|this|the architecture)\b/i.test(t)) return true;
   if (/^how does it work\??$/i.test(t)) return true;
+  if (/^how is that generated\??$/i.test(t)) return true;
+  if (/^what model does (that|it|this) use\??$/i.test(t)) return true;
   if (/^why (that |this )?(architecture|stack|design|choice)\??$/i.test(t)) return true;
   if (/^what (database|db|stack|frontend|backend) does it use\??$/i.test(t)) return true;
-  if (/^what would you (improve|change|rebuild)\??$/i.test(t)) return true;
+  if (/^what would you (improve|change|rebuild)( next)?\??$/i.test(t)) return true;
   if (/^why did (he|sudhanshu|you) (choose|build|make)\b/i.test(t) && t.length < 80) return true;
   if (/\bso why did\b|\bwhy (did|does|would).{0,40}\bkeep\b/i.test(t)) return true;
   if (/\bwhat was the hardest\b|\bhardest part\b/i.test(t)) return true;

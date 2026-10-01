@@ -241,7 +241,11 @@ function checkEvidence(pack) {
   }
 
   // Implementation/RAG voice is never valid evidence framing.
+  // MiniLM / skill-gap "embedding" is CODE-PROVEN product vocabulary, not a RAG leak.
+  const codeProvenTask = /^(placementpro|queryforge)_(detail|unknown)$/.test(String(pack.task || ''));
+  const technicalEmbedding = /minilm|sentence.?transform|cosine simil|skill.?gap|graph node|vector initialization|all-minilm/i.test(text);
   for (const re of IMPL_LEAKS) {
+    if (re.source.includes('embeddings') && (codeProvenTask || technicalEmbedding)) continue;
     if (re.test(text)) issues.push(`implementation-voice leak: /${re.source}/`);
   }
 
@@ -522,7 +526,9 @@ function scrubImplLeaks(text) {
   t = t.replace(/\bretrieval-and-reasoning layer\b/gi, 'portfolio assistant');
   t = t.replace(/\bknowledge base\b/gi, 'portfolio');
   t = t.replace(/\bRAG\b/g, 'portfolio reasoning');
-  t = t.replace(/\bembeddings?\b/gi, 'portfolio content');
+  if (!/minilm|sentence.?transform|cosine simil|skill.?gap|graph node|vector initialization|all-minilm/i.test(t)) {
+    t = t.replace(/\bembeddings?\b/gi, 'portfolio content');
+  }
   return t.trim();
 }
 

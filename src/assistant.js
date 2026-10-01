@@ -230,9 +230,13 @@ function buildFollowups(intent, payload, focusProject, questionFrame) {
   if (payload?._portfolioIntelligence === 'undocumented_detail'
     || payload?._portfolioIntelligence === 'queryforge_detail'
     || payload?._portfolioIntelligence === 'queryforge_unknown'
+    || payload?._portfolioIntelligence === 'placementpro_detail'
+    || payload?._portfolioIntelligence === 'placementpro_unknown'
     || payload?._reasoningStrategy?.task === 'undocumented_detail'
     || payload?._reasoningStrategy?.task === 'queryforge_detail'
-    || payload?._reasoningStrategy?.task === 'queryforge_unknown') {
+    || payload?._reasoningStrategy?.task === 'queryforge_unknown'
+    || payload?._reasoningStrategy?.task === 'placementpro_detail'
+    || payload?._reasoningStrategy?.task === 'placementpro_unknown') {
     return [];
   }
   const proj = payload?.project

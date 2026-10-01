@@ -31,6 +31,7 @@ import {
 } from './reasoning.js';
 import { wantsDirectAnswerOnly } from './conversation.js';
 import { matchQueryForgeFacet } from './queryforgeKnowledge.js';
+import { matchPlacementProFacet } from './placementproKnowledge.js';
 import { finalizeWithReflection } from './reflection.js';
 import {
   adaptDraft,
@@ -691,10 +692,10 @@ const LocalProvider = {
   _recruiterFocusText(focusArea, projects) {
     const map = {
       backend:  `QueryForgeAI and RepoRadarAI both have Python backends in production. FastAPI + Uvicorn for QueryForgeAI's cloud API, FastAPI for RepoRadar's async GitHub ingestion. Placement Pro+ remains the Flask-oriented portfolio card.`,
-      ai:       `All three products ship applied AI: QueryForgeAI uses LLMs for SQL optimization, Placement Pro+ for resume gap detection, and RepoRadarAI for repository understanding. AI is never a gimmick — it's the core product feature.`,
+      ai:       `All three products ship applied intelligence: QueryForgeAI uses LLMs for SQL generation/analysis, Placement Pro+ uses MiniLM embeddings plus graph/heuristic templates (not a chat LLM), and RepoRadarAI for repository understanding.`,
       database: `QueryForgeAI is the deepest database engineering project — natural language to SQL, execution plan analysis, and schema-aware query optimization. It treats the database as an intelligent system, not just storage.`,
       frontend: `Placement Pro+'s terminal-style OS interface and RepoRadarAI's React/TypeScript surface demonstrate full-stack delivery. The frontend is always decoupled from the backend over REST.`,
-      fullstack: `Placement Pro+ is the most complete full-stack product — resume parsing backend, AI gap detection, personalized roadmap generation, and a terminal-style OS frontend. End-to-end ownership, single engineer.`,
+      fullstack: `Placement Pro+ is the most complete full-stack product — Flask + React/TypeScript, structured profiles, graph skill-gap, template roadmaps, and a terminal-style OS frontend. End-to-end ownership, single engineer.`,
     };
     return map[focusArea] || `See the projects section for a detailed walkthrough of each system.`;
   },
@@ -998,6 +999,8 @@ const LocalProvider = {
         && intelligenceIntent !== 'undocumented_detail'
         && intelligenceIntent !== 'queryforge_detail'
         && intelligenceIntent !== 'queryforge_unknown'
+        && intelligenceIntent !== 'placementpro_detail'
+        && intelligenceIntent !== 'placementpro_unknown'
         ? { _followupHint: followupHint }
         : {}),
       _conversationalMove: move,
@@ -1311,7 +1314,8 @@ const LocalProvider = {
       || ctx?.payload?._reasoningStrategy?.task
       || '';
     if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
-      || task === 'queryforge_detail' || task === 'queryforge_unknown') {
+      || task === 'queryforge_detail' || task === 'queryforge_unknown'
+      || task === 'placementpro_detail' || task === 'placementpro_unknown') {
       return null;
     }
     // Don't bolt navigation/CTAs onto short identity / brand / beyond-resume answers
@@ -1594,6 +1598,8 @@ const LocalProvider = {
     if (isEngineeringDetailQuery(q)) return false;
     const qfFacet = matchQueryForgeFacet(q);
     if (qfFacet?.confidence === 'documented') return false;
+    const ppFacet = matchPlacementProFacet(q);
+    if (ppFacet?.confidence === 'documented') return false;
 
     // Explicit documentation / walkthrough mode only
     if (/\b(walk (me )?through|deep dive|in detail|documentation|document|open (the )?project|project page|full (write-?up|breakdown))\b/i.test(q)) {

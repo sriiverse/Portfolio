@@ -173,6 +173,36 @@ test('QueryForge overview → How does it work? e2e', async () => {
   assert(/generate-sql|schema_def|FastAPI|Gemini|\/analyze/i.test(out.text), 'facet content');
 });
 
+test('Placement Pro+ engineering detail is not brochure', async () => {
+  const q = 'How does Placement Pro+ generate my roadmap?';
+  assert(isEngineeringDetailQuery(q), 'roadmap q is engineering detail');
+  assert(!isGenuineProjectOverviewQuery(q), 'not overview');
+  const frame = buildQuestionFrame(q, {});
+  const r = classifyReasoningStrategy(q, { questionFrame: frame, memory: {} });
+  assert(r.task === 'placementpro_detail', `got ${r.task}`);
+  const out = await render(q);
+  assert(out.kind !== 'project-card', `kind=${out.kind}`);
+  assert(out?.payload?._portfolioIntelligence === 'placementpro_detail', `intel=${out?.payload?._portfolioIntelligence}`);
+  assert(/template|12 week|MiniLM|graph/i.test(out.text), 'mechanics');
+  assert(!/Resume Analysis/i.test(out.text), 'no resume brochure');
+});
+
+test('Placement Pro+ overview → How does it work? stays on CODE-PROVEN facets', () => {
+  const mem = {
+    lastProject: 'placementpro',
+    lastCommitment: { projectId: 'placementpro', name: 'Placement Pro+', task: 'project_overview' },
+    activeMode: 'project_overview',
+  };
+  const follow = 'How does it work? Placement Pro+';
+  const frame = buildQuestionFrame(follow, { focusProject: 'placementpro', memory: mem });
+  const r = classifyReasoningStrategy(follow, { questionFrame: frame, memory: mem });
+  assert(r.task === 'placementpro_detail', `task=${r.task}`);
+  assert(r.task !== 'arch_why', 'must not use generic five-layer arch_why');
+  const text = synthesizeReasoning(r, follow, { questionFrame: frame, memory: mem });
+  assert(/Flask|React|MiniLM|NetworkX|skill/i.test(text), `expected PP facet facts in: ${text.slice(0, 200)}`);
+  assert(!/five-layer split/i.test(text), 'must not dump generic five-layer spine');
+});
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
 if (failed.length) process.exit(1);

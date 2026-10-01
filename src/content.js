@@ -67,34 +67,34 @@ export const PROJECTS = [
     id: 'placementpro',
     index: '02',
     name: 'Placement Pro+',
-    title: 'AI-Powered Career Guidance & Placement Preparation Platform',
+    title: 'Career Guidance & Placement Preparation Platform',
     tagline: 'Placement.OS — an operating system for getting placed.',
     live: 'https://placement-pro.netlify.app/login',
-    repo: null,
+    repo: 'https://github.com/sriiverse/Placement-Pro',
     accent: '#7C3AED',
     accent2: '#4F46E5',
     theme: 'career',
     problem:
-      'Placement preparation is fragmented. Students do not know which skills they are missing, which roles to target, or what to learn next — and existing tools give generic advice that ignores the actual resume.',
+      'Placement preparation is fragmented. Students do not know which skills they are missing, which roles to target, or what to learn next — and generic advice ignores the skills they actually have.',
     solution:
-      'Placement Pro+ is built as a terminal-style "Placement.OS". It analyzes the resume, detects skill gaps against target roles, recommends a personalized learning roadmap, and tracks preparation progress with analytics.',
+      'Placement Pro+ is built as a terminal-style "Placement.OS". It maps a structured skill profile onto a knowledge graph (MiniLM embeddings + NetworkX paths), returns missing skills and heuristic readiness, and builds a deterministic 12-week template roadmap in the session.',
     features: [
-      { icon: '📄', title: 'Resume Analysis', desc: 'Parse and evaluate the resume against target placement roles.' },
-      { icon: '🎯', title: 'Skill Gap Detection', desc: 'Identify precisely which skills are missing for the target role.' },
-      { icon: '🗺️', title: 'Career Roadmaps', desc: 'Generate a personalized, step-by-step path to placement readiness.' },
-      { icon: '📚', title: 'Learning Recommendations', desc: 'Surface what to learn next, in priority order.' },
-      { icon: '📈', title: 'Progress Dashboard', desc: 'Track preparation as measurable progress over time.' },
-      { icon: '🧠', title: 'Analytics', desc: 'AI-driven insight into readiness and weak areas.' },
+      { icon: '👤', title: 'Structured Profile', desc: 'Capture skills, CGPA, and target role as structured fields — not a resume-file parser.' },
+      { icon: '🎯', title: 'Skill Gap Detection', desc: 'Embed profile skills against graph nodes, then shortest-path the remaining gaps.' },
+      { icon: '🗺️', title: 'Career Roadmaps', desc: 'Fill a 12-week template from missing graph nodes and keep it in UI state.' },
+      { icon: '📚', title: 'Learning Recommendations', desc: 'Surface what to learn next from the remaining path, in graph order.' },
+      { icon: '📈', title: 'Dashboard', desc: 'Show heuristic readiness, placement probability, and company matches for the current session.' },
+      { icon: '🧠', title: 'Analytics', desc: 'Heuristic readiness and sigmoid-style placement probability — not an LLM score.' },
     ],
-    stack: ['Python', 'Flask', 'LLMs', 'REST APIs', 'JavaScript', 'TailwindCSS'],
+    stack: ['Python', 'Flask', 'React', 'TypeScript', 'REST APIs', 'JWT', 'TailwindCSS', 'Netlify'],
     decisions: [
       'The terminal / "OS" interface frames preparation as a system to operate, not a checklist to dread.',
-      'Analysis is anchored to the real resume, so advice is specific instead of generic.',
-      'Roadmaps are dynamic — they shift as detected gaps close.',
+      'Advice is anchored to the structured profile (skills / CGPA / role), not a parsed resume file.',
+      'Roadmaps are deterministic templates from missing graph nodes; they are not persisted and do not adapt from stored gap-closure history.',
     ],
     metrics: [
-      { k: 'Input', v: 'Resume-driven' },
-      { k: 'Output', v: 'Personalized roadmap' },
+      { k: 'Input', v: 'Structured profile' },
+      { k: 'Output', v: 'Gap + 12-week template' },
       { k: 'Surface', v: 'Terminal-style OS' },
     ],
   },
@@ -174,7 +174,7 @@ export const JOURNEY = [
   { phase: 'Craft',     title: 'Backend Development',        desc: 'Built server-side systems — APIs, auth, data modelling and the logic users never see.' },
   { phase: 'Intelligence', title: 'AI Applications',         desc: 'Began shipping applied AI: turning LLMs into product features, not demos.' },
   { phase: 'Ship 01',   title: 'QueryForgeAI',               desc: 'Natural-language SQL + optimization assistant — the first production AI system.' },
-  { phase: 'Ship 02',   title: 'Placement Pro+',             desc: 'AI placement platform with resume analysis and dynamic roadmaps.' },
+  { phase: 'Ship 02',   title: 'Placement Pro+',             desc: 'Placement.OS — structured skill profiles, graph skill-gap, and deterministic 12-week template roadmaps.' },
   { phase: 'Ship 03',   title: 'RepoRadarAI',                desc: 'GitHub repository intelligence — architecture, docs and health, generated by AI.' },
   { phase: 'Now',       title: 'Current',                    desc: 'Engineering SRIIVERSEAI — building intelligent software that solves real problems.' },
 ];
@@ -214,7 +214,7 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['placement', 'career', 'resume', 'roadmap', 'placement pro'],
-    a: 'Placement Pro+ is an AI-powered placement preparation platform. It analyzes your resume, detects skill gaps against target roles, generates a personalized learning roadmap, and tracks readiness with analytics. Its interface is styled as a terminal-style "Placement.OS". Live: placement-pro.netlify.app',
+    a: 'Placement Pro+ is a placement preparation platform (Placement.OS). It maps a structured skill profile onto a NetworkX graph using MiniLM embeddings (or exact-match fallback), returns missing skills plus heuristic readiness, and builds a deterministic 12-week template roadmap that stays in React state — not SQL, not an LLM, and not a resume parser. Live: placement-pro.netlify.app',
   },
   {
     q: ['reporadar', 'repo radar', 'github repository', 'repository analysis', 'repo intelligence'],
@@ -242,11 +242,11 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['ai', 'artificial intelligence', 'llm', 'machine learning', 'how does ai'],
-    a: 'AI is applied, not theoretical. Across the projects, LLMs power: natural-language→SQL, resume analysis & gap detection, and repository understanding & auto-documentation. Ollama is used for local model work. The AI always operates over real data — schemas, resumes and repositories.',
+    a: 'AI is applied, not theoretical. QueryForgeAI uses Gemini/Groq (or demo heuristics) over user-provided schema text. Placement Pro+ uses MiniLM embeddings plus a skill graph and templates — not a chat LLM and not a resume parser. RepoRadarAI uses applied models over GitHub repository signals. Ollama is used for local model work. Intelligence is supposed to operate over real product inputs — not invent them.',
   },
   {
     q: ['project', 'projects', 'work', 'portfolio', 'what has he built'],
-    a: 'Three production systems: 1) QueryForgeAI — AI SQL optimization & database assistant. 2) Placement Pro+ — AI placement prep with resume analysis & roadmaps. 3) RepoRadarAI — AI GitHub repository intelligence. All are live; scroll to the Work section for deep dives.',
+    a: 'Three production systems: 1) QueryForgeAI — SQL/Mongo generator and optimizer (Gemini/Groq or demo heuristics). 2) Placement Pro+ — Placement.OS with graph skill-gap and 12-week template roadmaps. 3) RepoRadarAI — GitHub repository intelligence. All are live; scroll to the Work section for deep dives.',
   },
 ];
 

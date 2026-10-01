@@ -97,7 +97,12 @@ test('philosophy includes AI reasoning layer motif when evidenced', () => {
 test('commonPatterns includes universal stack techs', () => {
   const patterns = getIdentityClaimsByFacet('commonPatterns', identity);
   assert(patterns.some((c) => /Python/i.test(c.statement)), 'python pattern');
-  assert(patterns.some((c) => /LLMs/i.test(c.statement)), 'llms pattern');
+  assert(patterns.some((c) => /REST APIs/i.test(c.statement)), 'rest pattern');
+  assert(patterns.some((c) => /React/i.test(c.statement)), 'react pattern');
+  assert(
+    !patterns.some((c) => /Shared stack pattern: `LLMs`/i.test(c.statement)),
+    'LLMs is not universal after Placement Pro+ CODE-PROVEN stack',
+  );
 });
 
 test('growthAreas does not invent employers or seniority', () => {

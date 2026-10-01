@@ -190,7 +190,8 @@ function pickReflectionPhrase(ctx) {
   const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
   const task = String(ctx?.payload?._portfolioIntelligence || '');
   if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
-    || task === 'queryforge_detail' || task === 'queryforge_unknown') return null;
+    || task === 'queryforge_detail' || task === 'queryforge_unknown'
+    || task === 'placementpro_detail' || task === 'placementpro_unknown') return null;
 
   const memory = ctx.memory;
   const turnCount = memory?.turnCount ?? (memory?.turns?.length || 0);
@@ -291,7 +292,8 @@ export function pickContextualInvite(ctx = {}, move = 'Answer') {
   const modeId = resolveAudienceMode(ctx);
 
   if (task === 'undocumented_detail' || task === 'honest_unknown'
-    || task === 'queryforge_detail' || task === 'queryforge_unknown') return null;
+    || task === 'queryforge_detail' || task === 'queryforge_unknown'
+    || task === 'placementpro_detail' || task === 'placementpro_unknown') return null;
   if (wantsDirectAnswerOnly(q)) return null;
 
   if (task === 'why_flask' || /\bwhy flask\b/i.test(q)) {
@@ -515,11 +517,14 @@ function applyAnswerShapeBudget(text, ctx = {}) {
       .replace(/^\*\*Solution:\*\*\s*/gm, '');
   }
 
-  // Default conversation length: ~4–8 sentences unless explicit expansion/docs
+  // Default conversation length: ~4–8 sentences unless explicit expansion/docs.
+  // CODE-PROVEN project facets must not be sentence-reassembled (decimals /
+  // dotted identifiers like 0.60 and nx.shortest_path).
+  const preserveCodeProven = /^(placementpro|queryforge)_(detail|unknown)$/.test(task);
   const wantsExpand = wantsDocs
     || /\b(more detail|go deeper|elaborate|expand|full (explanation|write-?up)|everything about)\b/i.test(q)
     || isBoundFollowUpQuery(q);
-  if (!wantsExpand && !/^## /m.test(out) && !/\| Dimension \|/i.test(out) && !/^\|/m.test(out)) {
+  if (!preserveCodeProven && !wantsExpand && !/^## /m.test(out) && !/\| Dimension \|/i.test(out) && !/^\|/m.test(out)) {
     out = clampConversationalLength(out, 8);
   }
 
@@ -532,7 +537,15 @@ function applyAnswerShapeBudget(text, ctx = {}) {
 
 /** Keep invite (trailing question) while capping body to ~4–8 sentences / 3 paras. */
 function clampConversationalLength(text, maxSentences) {
-  const parts = String(text || '').split(/\n\n+/).filter((p) => p.trim());
+  const held = [];
+  const masked = String(text || '').replace(
+    /\b(?:\d+\.\d+|[A-Za-z][\w-]*(?:\.[A-Za-z][\w-]*)+)\b/g,
+    (m) => {
+      held.push(m);
+      return `\uE000${held.length - 1}\uE001`;
+    },
+  );
+  const parts = masked.split(/\n\n+/).filter((p) => p.trim());
   if (!parts.length) return text;
   const last = parts[parts.length - 1];
   const invite = /\?\s*$/.test(last.trim()) ? last : null;
@@ -555,8 +568,10 @@ function clampConversationalLength(text, maxSentences) {
     if (slice.length) kept.push(slice.join(' '));
     if (count >= maxSentences) break;
   }
-  const out = kept.join('\n\n').trim();
-  return invite ? `${out}\n\n${invite}` : out;
+  const clamped = kept.join('\n\n').trim();
+  const out = (invite ? `${clamped}\n\n${invite}` : clamped)
+    .replace(/\uE000(\d+)\uE001/g, (_, i) => held[Number(i)] ?? _);
+  return out;
 }
 
 /**
@@ -632,7 +647,8 @@ export function applyConversationFlow(text, ctx = {}) {
   const task = String(ctx?.payload?._portfolioIntelligence || ctx?.payload?._reasoningStrategy?.task || '');
   const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
   if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
-    || task === 'queryforge_detail' || task === 'queryforge_unknown') {
+    || task === 'queryforge_detail' || task === 'queryforge_unknown'
+    || task === 'placementpro_detail' || task === 'placementpro_unknown') {
     return out.replace(/\n{3,}/g, '\n\n').trim();
   }
   if (!endsWithQuestion(out)) {
