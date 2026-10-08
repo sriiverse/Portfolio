@@ -156,7 +156,7 @@ export const ASSISTANT_CAPABILITIES = [
   {
     icon: '🏗️',
     label: 'Project & Architecture Explanations',
-    desc: 'Explains any of the three shipped projects, their engineering decisions, and the five-layer system architecture behind all of them.',
+    desc: 'Explains any of the three shipped projects and their engineering decisions, plus the portfolio five-layer teaching diagram.',
   },
 ];
 

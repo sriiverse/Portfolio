@@ -215,8 +215,12 @@ class Memory {
    * V4.5 Mod 2 — bind follow-ups to the last commitment (project + mode).
    * Session-only; does not invent facts.
    */
-  bindConversationState({ projectId, mode, commitment } = {}) {
-    if (projectId) this.lastProject = projectId;
+  bindConversationState({ projectId, mode, commitment, clearProject } = {}) {
+    if (clearProject || (Array.isArray(commitment?.projectIds) && commitment.projectIds.length >= 2)) {
+      this.lastProject = null;
+    } else if (projectId) {
+      this.lastProject = projectId;
+    }
     if (mode) this.activeMode = mode;
     if (commitment) this.lastCommitment = commitment;
     this._save();

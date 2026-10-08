@@ -181,8 +181,10 @@ export function classifyConversationMode(query) {
     return 'beyond_resume';
   }
 
-  // brand — SRIIVERSEAI as universe/environment (not a skill check)
-  if (/\b(what is sriiverse\s*ai|what is sriiverseai|sriiverse\s*ai (different|vs|versus)|different from a typical portfolio|role inside (it|sriiverse)|what do you (actually )?know about sriiverse)\b/i.test(t)) {
+  // brand — SRIIVERSEAI as universe/environment (not a skill check).
+  // Digital Brain is the intelligence layer, not a fourth project.
+  if (/\bdigital brain\b/i.test(t)
+    || /\b(what is sriiverse\s*ai|what is sriiverseai|sriiverse\s*ai (different|vs|versus)|different from a typical portfolio|role inside (it|sriiverse)|what do you (actually )?know about sriiverse)\b/i.test(t)) {
     return 'brand';
   }
 
@@ -225,6 +227,105 @@ export function isBoundFollowUpQuery(query) {
   if (/\bwhat was the hardest\b|\bhardest part\b/i.test(t)) return true;
   if (/\bwhy flask\b|\bkeep flask\b|\bkept flask\b/i.test(t) && !/queryforge|reporadar|placement/i.test(t)) return true;
   return false;
+}
+
+function mentionsProject(query, project) {
+  const q = String(query || '').toLowerCase();
+  const name = String(project?.name || '').toLowerCase();
+  const id = String(project?.id || '').toLowerCase();
+  return (id && q.includes(id)) || (name && q.includes(name));
+}
+
+/** Projects named in this question. An explicit name outranks an older comparison. */
+export function findExplicitProjects(query) {
+  return getAllProjects().filter((project) => mentionsProject(query, project));
+}
+
+/**
+ * The question refers to prior context and asks to compare, so a newly
+ * named project joins the bound set instead of replacing it.
+ */
+export function explicitlyJoinsPriorComparison(query) {
+  const t = String(query || '');
+  const compares = /\b(compare|compared|comparison|vs\.?|versus|difference between)\b/i.test(t);
+  const deictic = /\b(that|this|those|them|their|it|the same|the previous|that approach)\b/i.test(t);
+  return compares && deictic;
+}
+
+function isContextualFollowUp(query) {
+  const t = String(query || '').trim();
+  if (!t) return false;
+  if (isBoundFollowUpQuery(t)) return true;
+  if (/\b(which one|which of them|what model|what about)\b/i.test(t)) return true;
+  if (/\b(it|that|this|its|one|both|other|their|them|those)\b/i.test(t)) return true;
+  // Short How/Why/What is a follow-up only when the question names no project.
+  // Word count must not override an explicit project.
+  return /^(how|why|what)\b/i.test(t) && t.split(/\s+/).length <= 8;
+}
+
+/**
+ * How prior project context attaches to this question.
+ * explicit — a named project replaces the old comparison
+ * expand — a deictic comparison merges the prior set with any new project
+ * follow-set — unnamed follow-up keeps the comparison project set
+ * follow-one — unnamed follow-up keeps a single lastProject
+ * none — leave the query unchanged
+ */
+export function classifyContextAttachment(query, { lastProject = null, projectIds = [] } = {}) {
+  const explicit = findExplicitProjects(query);
+  const bound = (Array.isArray(projectIds) ? projectIds : []).filter(Boolean);
+  const joins = explicitlyJoinsPriorComparison(query);
+  if (joins && (bound.length >= 2 || lastProject)) return 'expand';
+  if (explicit.length) return 'explicit';
+  if (!isContextualFollowUp(query)) return 'none';
+  if (bound.length >= 2) return 'follow-set';
+  if (lastProject) return 'follow-one';
+  return 'none';
+}
+
+/**
+ * Shared by the live resolver and the Phase 2D harness so they cannot drift.
+ * Returns the query the rest of the pipeline should classify.
+ */
+export function enrichBoundContext(query, {
+  lastProject = null,
+  projectIds = [],
+  awarenessProject = null,
+} = {}) {
+  const projects = getAllProjects();
+  const byId = (id) => projects.find((project) => project.id === id) || null;
+  const explicit = findExplicitProjects(query);
+  const bound = (Array.isArray(projectIds) ? projectIds : []).filter(Boolean);
+  const attachment = classifyContextAttachment(query, { lastProject, projectIds: bound });
+  const append = (ids) => {
+    const missing = ids.map(byId).filter(Boolean).filter((project) => !mentionsProject(query, project));
+    if (!missing.length) return query;
+    return `${query} ${missing.map((project) => project.name).join(' ')}`;
+  };
+
+  if (attachment === 'explicit') {
+    return { query, focusProject: explicit[0]?.id || null, enriched: false };
+  }
+  if (attachment === 'expand') {
+    const base = bound.length >= 2 ? bound : [lastProject].filter(Boolean);
+    const enriched = append(base);
+    return { query: enriched, focusProject: null, enriched: enriched !== query };
+  }
+  if (attachment === 'follow-set') {
+    const enriched = append(bound);
+    return { query: enriched, focusProject: null, enriched: enriched !== query };
+  }
+  if (attachment === 'follow-one' && lastProject) {
+    const enriched = append([lastProject]);
+    return { query: enriched, focusProject: lastProject, enriched: enriched !== query };
+  }
+  const pronoun = /\b(it|that|this|its|second|third|first|one|both|other|next)\b/i.test(query);
+  if (!explicit.length && awarenessProject && pronoun) {
+    const focus = lastProject || awarenessProject;
+    const enriched = append([focus]);
+    return { query: enriched, focusProject: focus, enriched: enriched !== query };
+  }
+  return { query, focusProject: explicit[0]?.id || lastProject || null, enriched: false };
 }
 
 /**

@@ -522,7 +522,8 @@ function applyAnswerShapeBudget(text, ctx = {}) {
   // Default conversation length: ~4–8 sentences unless explicit expansion/docs.
   // CODE-PROVEN project facets must not be sentence-reassembled (decimals /
   // dotted identifiers like 0.60 and nx.shortest_path).
-  const preserveCodeProven = /^(placementpro|queryforge|reporadar)_(detail|unknown)$/.test(task);
+  const preserveCodeProven = /^(placementpro|queryforge|reporadar)_(detail|unknown)$/.test(task)
+    || task === 'cross_project_compare';
   const wantsExpand = wantsDocs
     || /\b(more detail|go deeper|elaborate|expand|full (explanation|write-?up)|everything about)\b/i.test(q)
     || isBoundFollowUpQuery(q);

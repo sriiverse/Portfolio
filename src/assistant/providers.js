@@ -620,7 +620,7 @@ const LocalProvider = {
       const text = [
         `## Five-Layer System Architecture`,
         ``,
-        `Every project follows the same deliberate topology:`,
+        `Portfolio teaching diagram — not the inspected stack of every project:`,
         ``,
         `\`\`\``,
         `Frontend (React/TypeScript)`,
@@ -831,7 +831,7 @@ const LocalProvider = {
         `${b.solution}`,
         ``,
         `### Key Difference`,
-        `**${a.name}** is focused on ${a.theme}-domain intelligence. **${b.name}** targets the ${b.theme} domain. Both share the same five-layer architecture — the difference is in what the AI layer reasons over.`,
+        `**${a.name}** is focused on ${a.theme}-domain intelligence. **${b.name}** targets the ${b.theme} domain.`,
       ].join('\n');
 
       return {
@@ -1023,6 +1023,27 @@ const LocalProvider = {
     const task = classification?.task;
     if (!task || task === 'compare_passthrough') return;
 
+    const projectIds = Array.isArray(classification?.projectIds)
+      ? classification.projectIds.filter(Boolean)
+      : [];
+    if (task === 'cross_project_compare' && projectIds.length >= 2) {
+      const commitment = {
+        projectId: null,
+        name: null,
+        task,
+        projectIds,
+        lens: classification?.lens || null,
+      };
+      if (typeof memory.bindConversationState === 'function') {
+        memory.bindConversationState({ projectId: null, mode: task, commitment, clearProject: true });
+      } else {
+        memory.lastProject = null;
+        memory.activeMode = task;
+        memory.lastCommitment = commitment;
+      }
+      return;
+    }
+
     const text = String(spoken || '');
     const first = text.split(/\n\n/)[0] || text;
     const catalog = [
@@ -1038,6 +1059,10 @@ const LocalProvider = {
       for (const p of catalog) {
         if (p.re.test(text)) { projectId = p.id; break; }
       }
+    }
+    if (!projectId) {
+      const fromTask = /^(queryforge|placementpro|reporadar)_/.exec(task || '');
+      if (fromTask) projectId = fromTask[1];
     }
     if (!projectId) projectId = memory.lastProject || null;
     const name = catalog.find((p) => p.id === projectId)?.name || projectId;
@@ -1413,7 +1438,7 @@ const LocalProvider = {
     if (!intent || intent === 'compare_passthrough') return null;
 
     // Leave structured tech tables alone unless the ask is a "why X" rationale.
-    if (move === 'Compare' && !/^why_/.test(intent)) return null;
+    if (move === 'Compare' && intent !== 'cross_project_compare' && !/^why_/.test(intent)) return null;
 
     const blocks = plan?.blocks || [];
     const hasGap = blocks.some((b) => b.type === 'GapDisclosure');

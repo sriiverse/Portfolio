@@ -218,6 +218,149 @@ export function topByObjective(profiles, weights) {
    CLASSIFY (unchanged behavioral contract — Sprint 2)
    ============================================================ */
 
+const CROSS_PROJECT_CATALOG = [
+  { id: 'queryforge', name: 'QueryForgeAI', facets: QUERYFORGE_FACETS, re: /queryforge/i },
+  { id: 'placementpro', name: 'Placement Pro+', facets: PLACEMENTPRO_FACETS, re: /placement\s*pro\+?|placementpro/i },
+  { id: 'reporadar', name: 'RepoRadarAI', facets: REPORADAR_FACETS, re: /reporadar|repo\s*radar/i },
+];
+
+const CROSS_LENS_FACETS = {
+  model: { queryforge: ['qf-ai-model'], placementpro: ['pp-ai-model'], reporadar: ['rr-ai-model'] },
+  architecture: { queryforge: ['qf-architecture'], placementpro: ['pp-architecture'], reporadar: ['rr-architecture'] },
+  input: { queryforge: ['qf-user-flow', 'qf-dataflow-generator'], placementpro: ['pp-skill-gap'], reporadar: ['rr-ingestion', 'rr-github'] },
+  storage: { queryforge: ['qf-limitations', 'qf-architecture'], placementpro: ['pp-database'], reporadar: ['rr-data-flow', 'rr-caching'] },
+  sql: { queryforge: ['qf-purpose', 'qf-dataflow-generator'], placementpro: ['pp-database'], reporadar: ['rr-purpose'] },
+  github: { queryforge: ['qf-purpose'], placementpro: ['pp-purpose'], reporadar: ['rr-purpose', 'rr-ingestion'] },
+  skill: { queryforge: ['qf-purpose'], placementpro: ['pp-skill-gap', 'pp-ai-model'], reporadar: ['rr-purpose'] },
+  heuristic: { queryforge: ['qf-ai-model'], placementpro: ['pp-ai-model', 'pp-roadmap'], reporadar: ['rr-scoring', 'rr-ai-model'] },
+  differentiate: { queryforge: ['qf-purpose', 'qf-architecture'], placementpro: ['pp-purpose', 'pp-architecture'], reporadar: ['rr-purpose', 'rr-architecture'] },
+  depth: { queryforge: ['qf-ai-model', 'qf-dataflow-generator'], placementpro: ['pp-skill-gap', 'pp-roadmap'], reporadar: ['rr-scoring', 'rr-github'] },
+  connect: { queryforge: ['qf-purpose'], placementpro: ['pp-purpose'], reporadar: ['rr-purpose', 'rr-architecture'] },
+  premise: { queryforge: ['qf-architecture'], placementpro: ['pp-architecture'], reporadar: ['rr-architecture', 'rr-ai-model'] },
+  files: { queryforge: ['qf-ai-model'], placementpro: ['pp-ai-model'], reporadar: ['rr-ai-model', 'rr-ingestion'] },
+  intent: { queryforge: ['qf-limitations'], placementpro: ['pp-limitations'], reporadar: ['rr-limitations'] },
+};
+
+function namedCrossProjectIds(query) {
+  const t = String(query || '');
+  return CROSS_PROJECT_CATALOG.filter((p) => p.re.test(t)).map((p) => p.id);
+}
+
+function entityProjectIds(ctx) {
+  const list = ctx?.entities?.entities || [];
+  const ids = [];
+  for (const e of list) {
+    if (e?.type !== 'project') continue;
+    const id = String(e.canonical || e.id || '').toLowerCase();
+    const hit = CROSS_PROJECT_CATALOG.find((p) => p.id === id || p.re.test(id));
+    if (hit && !ids.includes(hit.id)) ids.push(hit.id);
+  }
+  return ids;
+}
+
+function boundCrossProjectIds(ctx) {
+  const ids = ctx?.memory?.lastCommitment?.projectIds;
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((id) => CROSS_PROJECT_CATALOG.some((p) => p.id === id));
+}
+
+/**
+ * Cross-project scope only. Generic words (model, API, architecture, AI, backend)
+ * do not activate this by themselves, and a single named project stays on its facet path.
+ */
+function resolveCrossProjectQuestion(query, ctx = {}) {
+  const t = String(query || '').toLowerCase().trim();
+  if (!t) return null;
+  const named = namedCrossProjectIds(t);
+  const fromEntities = entityProjectIds(ctx);
+  const bound = boundCrossProjectIds(ctx);
+  const portfolioWide = /\b(all three|these three|these projects|each project|the three projects|the three systems|which of the three|engineering patterns|patterns repeat)\b/i.test(t)
+    || (named.length === 0 && /\bwhich projects?\b/i.test(t));
+  const comparison = ctx?.questionFrame?.questionType === 'Comparison'
+    || /\bcompare\b|\bvs\.?\b|\bversus\b|\bdifference between\b/i.test(t);
+  const followUp = isBoundFollowUpQuery(query)
+    || /\b(which one|what model|which of them)\b/i.test(t);
+
+  let ids = [];
+  if (named.length >= 2) ids = named;
+  else if (comparison && fromEntities.length >= 2) ids = fromEntities;
+  else if (portfolioWide) ids = ['queryforge', 'placementpro', 'reporadar'];
+  else if (followUp && bound.length >= 2 && named.length === 0) ids = bound;
+  else if (named.length === 1 && named[0] === 'queryforge' && /\bminilm\b|all-minilm/i.test(t)) {
+    ids = ['queryforge', 'placementpro'];
+  } else {
+    return null;
+  }
+
+  let lens = 'differentiate';
+  if (/what would you (improve|change|rebuild)/i.test(t)) lens = 'intent';
+  else if (/^why\??$|^(and )?why\b/i.test(t)) lens = 'why';
+  else if (/\bminilm\b/.test(t) || /machine learning|\bml\b|generative|\bllm\b|what model|which model|uses an llm|uses ml/.test(t)) lens = 'model';
+  else if (/heuristic|deterministic/.test(t)) lens = 'heuristic';
+  else if (/persist|storage|\bdatabase\b/.test(t)) lens = 'storage';
+  else if (/input data|obtain their input|what does each project/.test(t)) lens = 'input';
+  else if (/github|metadata/.test(t)) lens = 'github';
+  else if (/skill-?gap/.test(t)) lens = 'skill';
+  else if (/\bsql\b/.test(t)) lens = 'sql';
+  else if (/python backend|share one api|share an api/.test(t)) lens = 'premise';
+  else if (/source code|repository files|\bast\b/.test(t)) lens = 'files';
+  else if (/engineering depth|demonstrates engineering/.test(t)) lens = 'depth';
+  else if (/what connects|connect these/.test(t)) lens = 'connect';
+  else if (/pattern/.test(t)) lens = 'differentiate';
+  else if (/backend|architect|share one architecture|most different/.test(t)) lens = 'architecture';
+
+  return { ids, lens, priorLens: ctx?.memory?.lastCommitment?.lens || null };
+}
+
+function facetParagraphs(ids, lens) {
+  const map = CROSS_LENS_FACETS[lens] || CROSS_LENS_FACETS.differentiate;
+  const blocks = [];
+  for (const id of ids) {
+    const project = CROSS_PROJECT_CATALOG.find((p) => p.id === id);
+    if (!project) continue;
+    const texts = (map[id] || []).map((fid) => project.facets.find((f) => f.id === fid)?.text).filter(Boolean);
+    if (texts.length) blocks.push(`**${project.name}.** ${texts.join(' ')}`);
+  }
+  return blocks;
+}
+
+function speakCrossProject(query, classification) {
+  const ids = classification?.projectIds || [];
+  const lens = classification?.lens || 'differentiate';
+  if (lens === 'intent') {
+    const limits = facetParagraphs(ids, 'intent');
+    const lead = 'Improvement priorities are not documented as CODE-PROVEN design intent, so I will not invent what to build next. Documented limitations are not a chosen roadmap.';
+    return [lead, ...limits].join('\n\n');
+  }
+  const prior = classification?.priorLens;
+  const evidenceLens = lens === 'why' ? (prior && prior !== 'why' ? prior : 'model') : lens;
+  const blocks = facetParagraphs(ids, evidenceLens);
+  const lead = [];
+  const t = String(query || '');
+  if (lens === 'premise' || /python backend|share one api|share an api/i.test(t)) {
+    lead.push('The premise that all three use Python backends is not true, so there is no shared Python API to justify.');
+  }
+  if (lens === 'why') {
+    lead.push('That contrast is documented behavior. Why the choice was made is not CODE-PROVEN, and I will not invent a motive.');
+  }
+  if (lens === 'connect') {
+    lead.push('What connects them is Sudhanshu shipping them inside SRIIVERSEAI. They are not one shared runtime, backend, database, API, or AI pipeline.');
+  }
+  if (lens === 'architecture' && /share one architecture|share an architecture|one architecture/i.test(t)) {
+    lead.push('No. The inspected architectures are different stacks, not one shared five-layer runtime.');
+  }
+  if (/\bminilm\b/i.test(t) && /queryforge/i.test(t)) {
+    lead.push('QueryForgeAI does not use MiniLM for SQL. MiniLM belongs to Placement Pro+ skill mapping.');
+  }
+  if (lens === 'model' && ids.includes('reporadar') && ids.includes('queryforge')) {
+    lead.push('QueryForgeAI is the generative-LLM system. RepoRadarAI does not use a generative model.');
+  }
+  if (!blocks.length) {
+    return 'I can contrast only the documented project facets, and I do not have a facet for that cross-project question yet.';
+  }
+  return [...lead, ...blocks].join('\n\n');
+}
+
 export function classifyReasoningStrategy(query, ctx = {}) {
   const t = String(query || '').toLowerCase().trim();
   const qType = ctx?.questionFrame?.questionType;
@@ -248,7 +391,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Summarize', task: 'beyond_resume' };
   }
   if (mode === 'brand') {
-    if (/are you|role|something else|sudhanshu.? or|or sriiverse/i.test(t)) {
+    if (/digital brain|are you|role|something else|sudhanshu.? or|or sriiverse|relationship between/i.test(t)) {
       return { strategy: 'Summarize', task: 'role_triad' };
     }
     if (/different|typical portfolio/i.test(t)) {
@@ -285,6 +428,22 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     if (/complexity/i.test(t)) return { strategy: 'Explain', task: 'probe_complexity' };
     if (/hardest/i.test(t)) return { strategy: 'Explain', task: 'probe_hardest' };
     return { strategy: 'Explain', task: 'probe_failure_modes' };
+  }
+
+  // Comparison context keeps the project set. A later "Which one?" / "Why?" / "What model?"
+  // must not collapse onto a single lastProject.
+  {
+    const crossFollow = resolveCrossProjectQuestion(t, ctx);
+    const boundSet = boundCrossProjectIds(ctx);
+    if (crossFollow && boundSet.length >= 2 && (isBoundFollowUpQuery(query) || /\b(which one|what model)\b/i.test(t)) && namedCrossProjectIds(t).length < 2) {
+      return {
+        strategy: 'Compare',
+        task: 'cross_project_compare',
+        projectIds: crossFollow.ids,
+        lens: crossFollow.lens,
+        priorLens: crossFollow.priorLens,
+      };
+    }
   }
 
   // --- V4.5 Mod 2: bound follow-ups inherit prior commitment ---
@@ -448,7 +607,8 @@ export function classifyReasoningStrategy(query, ctx = {}) {
 
   if (/weakest|weak area|biggest weakness|limitation|where could (he|sudhanshu) improve|what.*(lack|missing (?!skill))|areas? (to|for) improve/i.test(t)
     || (/improve/i.test(t) && /where|what|area/i.test(t))) {
-    if (!isPlacementProQuery(t) && !isQueryForgeQuery(t) && !isRepoRadarQuery(t)) {
+    const crossIntent = resolveCrossProjectQuestion(t, ctx);
+    if (!isPlacementProQuery(t) && !isQueryForgeQuery(t) && !isRepoRadarQuery(t) && crossIntent?.lens !== 'intent') {
       return { strategy: 'Critique', task: 'weakest_area' };
     }
   }
@@ -531,6 +691,19 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Infer', task: 'product_oriented' };
   }
 
+  {
+    const cross = resolveCrossProjectQuestion(t, ctx);
+    if (cross) {
+      return {
+        strategy: 'Compare',
+        task: 'cross_project_compare',
+        projectIds: cross.ids,
+        lens: cross.lens,
+        priorLens: cross.priorLens,
+      };
+    }
+  }
+
   // QueryForge CODE-PROVEN facets / explicit unknowns — before generic why_* only when
   // the query is QueryForge-scoped (or a QF-unique engineering cue).
   {
@@ -562,6 +735,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     if (!stealAuth && facet && facet.confidence === 'documented') {
       return { strategy: 'Summarize', task: 'placementpro_detail', focus: facet.id };
     }
+    if (!stealAuth && !facet && isPlacementProQuery(t) && /\bhow\b/i.test(t) && /\bworks?\b/i.test(t)) {
+      return { strategy: 'Summarize', task: 'placementpro_detail', focus: 'pp-purpose' };
+    }
   }
 
   {
@@ -578,6 +754,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     }
     if (!otherProjectBound && facet && facet.confidence === 'documented') {
       return { strategy: 'Summarize', task: 'reporadar_detail', focus: facet.id };
+    }
+    if (!otherProjectBound && !facet && isRepoRadarQuery(t) && /\bbuilt with\b/i.test(t)) {
+      return { strategy: 'Summarize', task: 'reporadar_detail', focus: 'rr-architecture' };
     }
   }
 
@@ -601,6 +780,10 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   }
   if (/how (do|does|would) (these |the )?projects? scale|do they scale|scalability/i.test(t)) {
     return { strategy: 'Explain', task: 'arch_scale' };
+  }
+
+  if (isRepoRadarQuery(t) && /\b(files?|source code|source files|\bast\b|clone)\b/i.test(t) && /\b(model|llm)\b/i.test(t)) {
+    return { strategy: 'Summarize', task: 'reporadar_detail', focus: 'rr-ai-model', secondary: 'rr-ingestion' };
   }
 
   // Engineering-detail without a QueryForge facet (or for other projects).
@@ -1141,7 +1324,7 @@ function opExplain(ctx, { task }) {
       `I designed the architecture as a deliberate five-layer split: ${path}.`,
       principles[0]?.statement
         || 'The problem I wanted to solve was clear ownership — frontend over REST, backend for correctness, AI reasoning over real data.',
-      `Same spine across ${ctx.profiles.map(nm).join(', ')}.`,
+      `That five-layer split is the portfolio teaching diagram. It is not a claim that ${ctx.profiles.map(nm).join(', ')} share one inspected runtime.`,
     ].join('\n\n');
   }
 
@@ -1186,14 +1369,13 @@ function opSummarize(ctx, { task }) {
         `Three interview talking points:`,
         `1. ${nm(ctx.byId('queryforge'))} — schema-grounded SQL/AI, not a blind generator.`,
         `2. ${nm(ctx.byId('reporadar'))} — live full-stack demo with a public repo.`,
-        `3. Shared five-layer architecture across three production AI ships.`,
+        `3. ${nm(ctx.byId('placementpro'))} — skill-gap matching and a deterministic roadmap, on its own stack.`,
       ].join('\n');
     }
     if (/rest|plain english/i.test(q)) {
       return [
         `REST, plainly: the UI asks the backend for data over HTTP endpoints — create, read, update, delete style contracts.`,
-        `In these ships, React (or the terminal UI) talks to Flask/FastAPI services that own auth, business logic, and AI orchestration.`,
-        `You see that pattern on ${nm(ctx.byId('queryforge'))}, ${nm(ctx.byId('placementpro'))}, and ${nm(ctx.byId('reporadar'))}.`,
+        `QueryForgeAI and Placement Pro+ expose Python HTTP services (FastAPI and Flask). RepoRadarAI serves GET /api/analyze from the Next.js app itself — not a Flask or FastAPI backend.`,
       ].join('\n\n');
     }
     // Describe Sudhanshu briefly — answer the ask, no contact/nav dump
@@ -1220,7 +1402,7 @@ function opSummarize(ctx, { task }) {
       `${lean?.statement || 'Center of gravity: Python backend + applied AI, with enough frontend to finish the product.'}`,
       `${ai?.statement || 'AI shows up as a reasoning layer over real inputs — schemas, resumes, repositories — not as decoration.'}`,
       `${ship?.statement || 'The portfolio bias is toward shipping live products you can click, not slideware.'}`,
-      `What makes the work interesting is that each product solves a concrete mess (SQL pain, placement prep chaos, opaque repos) with a clear architecture spine shared across ${ctx.profiles.map(nm).join(', ')}.`,
+      `What makes the work interesting is that each product solves a concrete mess (SQL pain, placement prep chaos, opaque repos) with its own architecture.`,
     ].filter(Boolean).join('\n\n');
   }
 
@@ -1301,7 +1483,19 @@ function opSummarize(ctx, { task }) {
     ].join('\n\n');
   }
 
+  if (task === 'cross_project_compare') {
+    return speakCrossProject(ctx.query, ctx.classification);
+  }
+
   if (task === 'reporadar_detail' || task === 'reporadar_unknown') {
+    const q = String(ctx.query || '');
+    const secondaryId = ctx.classification?.secondary;
+    if (secondaryId || (/\b(llm|model|generative)\b/i.test(q) && /\b(source|clone|\bast\b|files?)\b/i.test(q))) {
+      const primary = REPORADAR_FACETS.find((f) => f.id === (ctx.classification?.focus || 'rr-ai-model'));
+      const secondary = REPORADAR_FACETS.find((f) => f.id === (secondaryId || 'rr-ingestion'));
+      const parts = [primary?.text, secondary?.text].filter(Boolean);
+      if (parts.length) return parts.join('\n\n');
+    }
     const focusedId = ctx.classification?.focus;
     const facet = (focusedId && REPORADAR_FACETS.find((f) => f.id === focusedId))
       || matchRepoRadarFacet(ctx.query);
@@ -1360,7 +1554,7 @@ function opSummarize(ctx, { task }) {
     const ship = philosophy.find((c) => /Ship working production|slideware/i.test(c.statement));
     const ai = philosophy.find((c) => /reasoning layer/i.test(c.statement));
     return [
-      `A typical portfolio is a gallery of cards. SRIIVERSEAI is closer to an engineering environment — live systems, shared architecture, and a Digital Brain that can reason about the work.`,
+      `A typical portfolio is a gallery of cards. SRIIVERSEAI is closer to an engineering environment — live systems and a Digital Brain that can reason about the work.`,
       `${ai?.statement || 'AI is treated as a reasoning layer over real data.'} ${ship?.statement || 'The bias is toward shipping production software, not screenshots.'}`.trim(),
       `You can click demos, then ask why a decision was made. That's the difference.`,
     ].join('\n\n');
@@ -1369,7 +1563,7 @@ function opSummarize(ctx, { task }) {
   if (task === 'about_sudhanshu') {
     return [
       `${subject?.name || 'Sudhanshu Sinha'} is a ${subject?.title || 'software engineer'}. ${subject?.tagline || ''}`.trim(),
-      `He ships intelligent systems end to end: ${ctx.profiles.map(nm).join(', ')} — all live, sharing a five-layer architecture where AI reasons over real data.`,
+      `He ships intelligent systems end to end: ${ctx.profiles.map(nm).join(', ')} — all live, each with its own architecture.`,
       prefs.find((c) => /backend-leaning|Python/i.test(c.statement))?.statement
         || 'Center of gravity: Python backend + applied AI, with enough frontend to finish the product.',
     ].join('\n\n');
@@ -1389,7 +1583,7 @@ function opSummarize(ctx, { task }) {
     return [
       `My design philosophy is simple: **clear layer ownership, AI grounded in real inputs, ship the whole product.**`,
       design[0]?.statement || philosophy[0]?.statement || '',
-      `Same spine across ${ctx.profiles.map(nm).join(', ')}.`,
+      `The five-layer diagram is a teaching spine. ${ctx.profiles.map(nm).join(', ')} do not share one inspected runtime.`,
     ].filter(Boolean).join('\n\n');
   }
 
@@ -1492,7 +1686,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   };
 
   // --- Summarize / identity ---
-  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown', 'undocumented_detail', 'queryforge_detail', 'queryforge_unknown', 'placementpro_detail', 'placementpro_unknown', 'reporadar_detail', 'reporadar_unknown'].includes(task)) {
+  if (['capabilities', 'identity', 'about_sudhanshu', 'portfolio_different', 'tech_frequency', 'design_philosophy', 'engineer_type', 'strengths', 'brief_pitch', 'self_intro', 'project_overview', 'preference_gap', 'beyond_resume', 'brand_explain', 'role_triad', 'honest_unknown', 'undocumented_detail', 'queryforge_detail', 'queryforge_unknown', 'placementpro_detail', 'placementpro_unknown', 'reporadar_detail', 'reporadar_unknown', 'cross_project_compare'].includes(task)) {
     if (task === 'preference_gap') return opConversationMode(opCtx, { task });
     return opSummarize(opCtx, { task });
   }
@@ -1616,7 +1810,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
     return opEvaluate(opCtx, {
       conclusion: `Yes — I can design REST APIs.`,
       reasoning: `Confidence is high because REST isn't a single resume bullet — it's how my frontends talk to backends across the shipped systems.`,
-      evidence: `You'll see REST APIs on ${withRest.map(nm).join(', ') || 'all three projects'}, with Flask/FastAPI services owning the contracts.`,
+      evidence: `You'll see REST APIs on ${withRest.map(nm).join(', ') || 'the shipped projects'}. Python services use Flask or FastAPI; RepoRadarAI's analyze route is Next.js.`,
     });
   }
 

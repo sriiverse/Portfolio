@@ -167,7 +167,7 @@ addDoc({
   id: 'arch-overview',
   kind: 'arch-overview',
   title: 'System Architecture — Overview',
-  text: `The five-layer topology: ${ARCHITECTURE.map((n) => n.label).join(' → ')}. Every project follows this: Frontend (React/TypeScript) → Backend (Python/Flask/FastAPI) → AI Layer (LLMs/Ollama) → Database (PostgreSQL/MongoDB) → Deployment (Docker/Vercel/Netlify). The AI is a reasoning layer over real data, never a blind generator.`,
+  text: `Portfolio teaching diagram: ${ARCHITECTURE.map((n) => n.label).join(' → ')}. This is not the inspected architecture of every shipped project. QueryForgeAI's inspected backend is FastAPI, Placement Pro+ is Flask, and RepoRadarAI is a Next.js app — not a shared Python/LLM/database stack.`,
   tags: stemSet(`architecture system design topology layers how built request travels flow pipeline ${ARCHITECTURE.map((n) => n.label).join(' ')}`),
   source: 'System Architecture',
   link: '#architecture',

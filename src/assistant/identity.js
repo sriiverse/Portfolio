@@ -508,7 +508,7 @@ function deriveStrengths(profile, projects, techFreq, graph) {
     out.push(claim(
       'strength:architectural-consistency',
       'strengths',
-      'Maintains a consistent five-layer architecture story across the portfolio.',
+      'Keeps a five-layer teaching diagram for the portfolio. The three shipped projects do not share one inspected runtime.',
       'documented',
       layers.map((l) => ref('arch-layer', l.id)),
     ));

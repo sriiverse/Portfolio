@@ -49,7 +49,7 @@ import { decideTool, runTool, runProactiveTool, setKnowledgeRef } from './assist
 import { getProvider } from './assistant/providers.js';
 import { looksLikeJobDescription } from './assistant/jdmatch.js';
 import { interview } from './assistant/interview.js';
-import { buildQuestionFrame, isBoundFollowUpQuery, wantsDirectAnswerOnly } from './assistant/conversation.js';
+import { buildQuestionFrame, enrichBoundContext, wantsDirectAnswerOnly } from './assistant/conversation.js';
 import { resolveEntities, assessConfidence } from './assistant/entities.js';
 import { buildResponsePlan } from './assistant/planning.js';
 import {
@@ -178,39 +178,24 @@ const PROACTIVE_INTENT_FROM_QUESTION_TYPE = {
 /* ============================================================
    CONTEXT RESOLUTION
    ============================================================ */
-function resolveContext(query, intent) {
-  let focusProject = memory.lastProject;
+function boundProjectIds() {
+  const ids = memory.lastCommitment?.projectIds;
+  return Array.isArray(ids) ? ids.filter(Boolean) : [];
+}
 
+function resolveContext(query, intent) {
   // A pasted job description is long free-form prose, not a conversational
   // reference — skip pronoun/project resolution so the raw JD text reaches
   // jdmatch.js unmodified.
-  if (intent === 'jd-match') return { focusProject, query };
+  if (intent === 'jd-match') return { focusProject: memory.lastProject, query };
 
-  // Explicit project reference in query
-  const explicit = knowledge.getAllProjects().find((p) => {
-    const q = query.toLowerCase();
-    return q.includes(p.id) || q.includes(p.name.toLowerCase());
+  // Explicit project names win. A comparison set is appended only for a
+  // real follow-up, or when the question deictically asks to compare.
+  return enrichBoundContext(query, {
+    lastProject: memory.lastProject,
+    projectIds: boundProjectIds(),
+    awarenessProject: awareness.currentProject,
   });
-  if (explicit) focusProject = explicit.id;
-
-  // Awareness context: if visitor is looking at a project and uses pronouns
-  if (!explicit && awareness.currentProject) {
-    const q = query.toLowerCase();
-    const needsRef = /\b(it|that|this|its|second|third|first|one|both|other|next)\b/i.test(q);
-    if (needsRef) focusProject = focusProject || awareness.currentProject;
-  }
-
-  // Pronoun / follow-up resolution: rewrite query with project name for retrieval
-  const needsRef = /\b(it|that|this|its|second|third|first|one|both|other|next)\b/i.test(query)
-    || isBoundFollowUpQuery(query)
-    || (/^(how|why|what)\b/i.test(String(query || '').trim()) && String(query || '').trim().split(/\s+/).length <= 8 && focusProject);
-  let enrichedQuery = query;
-  if (needsRef && focusProject) {
-    const proj = knowledge.getProject(focusProject);
-    if (proj && !explicit) enrichedQuery = `${query} ${proj.name}`;
-  }
-
-  return { focusProject, query: enrichedQuery };
 }
 
 /* ============================================================

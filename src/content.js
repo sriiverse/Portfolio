@@ -233,7 +233,7 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['architecture', 'system design', 'how does it work', 'explain the architecture', 'how is it built', 'five-layer'],
-    a: 'Every system follows a five-layer topology: Frontend (React/TS) → Backend (Python/Flask/FastAPI) → AI Layer (LLMs/Ollama/retrieval) → Database (PostgreSQL/MongoDB) → Deployment (Docker/Vercel/Netlify). The AI is a reasoning layer over real data — never a blind generator.',
+    a: 'The portfolio has a five-layer teaching diagram: Frontend → Backend → AI Layer → Database → Deployment. That diagram is not the inspected architecture of every project. QueryForgeAI is FastAPI plus Gemini on a cloud path with no live database; Placement Pro+ is Flask plus MiniLM and NetworkX; RepoRadarAI is Next.js over GitHub REST metadata and heuristics, not a Python or LLM backend.',
   },
   {
     q: ['hire', 'hiring', 'why hire', 'recruit', 'employ', 'why should'],
