@@ -10,8 +10,8 @@ export const PROFILE = {
   title: 'Python Backend Engineer · AI Developer · Full-Stack Engineer',
   tagline: 'Building Intelligent Software That Solves Real Problems.',
   email: 'sudhanshutheking183@gmail.com',
-  github: 'https://github.com/sriiverse',
-  githubHandle: '@sriiverse',
+  github: 'https://github.com/sriiverse/Portfolio',
+  githubHandle: 'sriiverse/Portfolio',
   linkedin: 'https://www.linkedin.com/in/sudhanshu-sinha-4619a429a/',
   // NOTE: résumé not provided as a file in this build — button is wired but
   // the asset is a placeholder until the real PDF is dropped into /assets.
@@ -241,7 +241,7 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['contact', 'email', 'reach', 'get in touch', 'how to contact'],
-    a: 'You can reach Sudhanshu at hello@sriiverseai.dev, on GitHub at @sriiverse, or on LinkedIn at /in/sudhanshu-sinha. The contact section at the bottom of this page has every link.',
+    a: 'You can reach Sudhanshu at hello@sriiverseai.dev, on GitHub at github.com/sriiverse/Portfolio, or on LinkedIn at /in/sudhanshu-sinha. The contact section at the bottom of this page has every link.',
   },
   {
     q: ['ai', 'artificial intelligence', 'llm', 'machine learning', 'how does ai'],

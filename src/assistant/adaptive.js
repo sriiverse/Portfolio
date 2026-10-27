@@ -14,7 +14,7 @@ import {
   DIGITAL_BRAIN,
   WELCOME_VARIANTS,
 } from './persona.js';
-import { isBoundFollowUpQuery, wantsDirectAnswerOnly } from './conversation.js';
+import { classifyAnswerAspect, isBoundFollowUpQuery, wantsDirectAnswerOnly } from './conversation.js';
 
 export const MODE_IDS = Object.freeze([
   'recruiter', 'engineer', 'founder', 'student', 'default',
@@ -340,8 +340,22 @@ export function pickContextualInvite(ctx = {}, move = 'Answer') {
     return 'Want that related back to a shipped project, or another stack pair?';
   }
 
+  if (task === 'cross_project_compare') {
+    const aspect = classifyAnswerAspect(q);
+    if (aspect === 'api') return 'Want the request flow for one of them, or where each one stores data?';
+    if (aspect === 'stack') return 'Want how a request moves through one of them?';
+    if (aspect === 'motivation') return 'Want the stack for one of them, or its internal routes?';
+    if (aspect === 'architecture') return 'Want the external services one of them calls, or a concrete limitation?';
+    return 'Want the stack, the APIs, or the problem one of them solves?';
+  }
+
   if (topic?.id === 'queryforge') {
-    return 'Interested in why I chose this architecture, or the hardest engineering problem I solved there?';
+    const aspect = classifyAnswerAspect(q);
+    if (aspect === 'stack') return 'Want the request flow, or how Gemini and Groq are used?';
+    if (aspect === 'architecture') return 'Want the internal routes, or what the cloud path does not do?';
+    if (aspect === 'motivation') return 'Want the stack, or how a request is handled?';
+    if (aspect === 'api') return 'Want the generator flow, or the cloud-path limitations?';
+    return 'Want the stack, the request flow, or a limitation of the cloud path?';
   }
   if (topic?.id === 'reporadar') {
     return 'Want the GitHub REST caps, or how the health/bus-factor heuristics are calculated?';

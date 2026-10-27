@@ -229,6 +229,105 @@ export function isBoundFollowUpQuery(query) {
   return false;
 }
 
+/**
+ * The dimension the visitor actually asked for.
+ * One classifier, shared by question type, reasoning, retrieval-adjacent
+ * brochure gating, and follow-up suggestions. Returns null when a more
+ * specific engineering facet (data flow, model, design-intent) should win.
+ * @returns {'stack'|'motivation'|'architecture'|'api'|'comparison'|'walkthrough'|'flow'|'yesno'|null}
+ */
+export function classifyAnswerAspect(query) {
+  const t = String(query || '').toLowerCase().trim();
+  if (!t) return null;
+
+  const namedProject = /queryforge|placement\s*pro|placementpro|reporadar|repo\s*radar/i.test(t);
+  const competency = /\b(can|could|able to)\b.{0,32}\b(design|build|write|create)\b/i.test(t);
+  const designChoice = /\bwhy\b.{0,48}\b(chosen|choose|chose|picked|prefer)\b/i.test(t)
+    || /\bwhy\b.{0,36}\b(fastapi|flask|gemini|groq|netlify|render|react|minilm|networkx|octokit|vercel|next)\b/i.test(t);
+
+  if (/\b(apis?|endpoints?|external (?:apis?|services?|providers?)|third[- ]party)\b/i.test(t) && !competency) {
+    return 'api';
+  }
+
+  const motivation = /\bmotivation\b/i.test(t)
+    || /\bbehind building\b/i.test(t)
+    || /\bwhy (did|does|do|was|is).{0,48}\b(build|built|create|created|make|made)\b/i.test(t)
+    || /\bwhat problem\b/i.test(t);
+  if (motivation && !designChoice) return 'motivation';
+
+  // Closed technology questions get a yes/no before the full stack paragraph.
+  const yesNoTech = /^(?:is|does|did|was|are|do)\b/i.test(t)
+    && /\b(?:built with|use|uses|using)\b/i.test(t)
+    && /\b(?:flask|fastapi|uvicorn|react|vite|next\.?js|gemini|groq)\b/i.test(t)
+    && namedProject;
+  if (yesNoTech) return 'yesno';
+
+  const stack = /\b(tech(?:nology)? stack|(?:the )?stack (?:for|of)|what technologies|what tools|technologies (?:does|did)|what did (?:he|you|sudhanshu) use|used to build|use to build|built with)\b/i.test(t)
+    || /\bwhat\b.{0,48}\b(?:use|used|using)\b.{0,32}\bbuild\b/i.test(t);
+  if (stack && !/\barchitect/i.test(t)) return 'stack';
+
+  const analyzesTargetArchitecture = /\banaly[sz]e\b.{0,40}\barchitect/i.test(t)
+    || /\btarget(?:'s| repo)? architecture\b/i.test(t);
+  const explainsOwnArchitecture = !analyzesTargetArchitecture && (
+    (/\b(explain|describe|what is|what's|show)\b.{0,48}\barchitect/i.test(t))
+    || /\barchitect\w*\s+of\b/i.test(t)
+  );
+  const howBuilt = /\bhow (?:is|was)\b.{0,48}\b(?:built|designed|structured)\b/i.test(t);
+  const portfolioWide = /\b(five[- ]layer|overall architecture|portfolio architecture|in general)\b/i.test(t);
+  if ((explainsOwnArchitecture || howBuilt) && namedProject && !portfolioWide && !designChoice) {
+    return 'architecture';
+  }
+
+  // "How does QueryForgeAI work?" The project name has to be the subject.
+  // "How does authentication work in Placement Pro+?" stays on that facet.
+  const projectSubject = '(?:queryforgeai|queryforge|reporadarai|reporadar|repo\\s*radar|placement\\s*pro\\+?)';
+  const productFlow = new RegExp(`\\bhow (?:does|do|did) (?:the |an? )?(?:${projectSubject})(?:\\s+actually)?\\s+works?\\b`, 'i').test(t);
+  const assistantSelf = /\bhow (?:does|do) (?:you|the assistant|this assistant|this chat)\b/i.test(t);
+  if (productFlow && namedProject && !assistantSelf && !analyzesTargetArchitecture) return 'flow';
+
+  if (/\b(compare|vs\.?|versus|difference between)\b/i.test(t)) return 'comparison';
+
+  const explicitWalkthrough = /\b(walk (me )?through|deep dive|in detail|open (the )?project|full (write-?up|breakdown))\b/i.test(t);
+  const flowWalkthrough = /\b(flow|pipeline|generat|from user input|under the hood|schema_def)\b/i.test(t);
+  if (explicitWalkthrough && !flowWalkthrough) return 'walkthrough';
+
+  return null;
+}
+
+/**
+ * Next-step questions that change dimension. Null when this turn has no
+ * aspect (engineering-detail answers keep their existing empty chip set).
+ */
+export function suggestFollowupAngles(query, projectName) {
+  const aspect = classifyAnswerAspect(query);
+  const name = projectName || 'this project';
+  if (aspect === 'stack') {
+    return [
+      `How does a request move through ${name}?`,
+      `Which external services does ${name} call?`,
+    ];
+  }
+  if (aspect === 'architecture') {
+    return [
+      `What problem does ${name} solve?`,
+      `Which routes does ${name} expose?`,
+    ];
+  }
+  if (aspect === 'motivation') {
+    return [
+      `What did he use to build ${name}?`,
+      `How is ${name} structured?`,
+    ];
+  }
+  if (aspect === 'api') {
+    return [
+      `How does a request move through ${name}?`,
+      `What does the free path not do?`,
+    ];
+  }
+  return null;
+}
+
 function mentionsProject(query, project) {
   const q = String(query || '').toLowerCase();
   const name = String(project?.name || '').toLowerCase();
@@ -578,12 +677,25 @@ function classifyQuestionType(qLower, canonical, subject, ctx) {
   // 8. Recruiter — absorbed verbatim from classifyIntent's old 'recruiter' branch.
   if (RECRUITER_RE.test(qLower)) return make('Recruiter');
 
+  // Product "how does this project work?" is a flow question. ARCHITECTURE_RE
+  // also matches "how … work", and returning ArchitectureExplanation here
+  // used to leave reasoning with no task and an empty answer.
+  if (classifyAnswerAspect(qLower) === 'flow') {
+    return make('ProjectExplanation');
+  }
+
   // 9. ArchitectureExplanation — absorbed verbatim from classifyIntent's old
   // 'architecture' branch. Reuses resolveExplanation()'s scope resolution.
   if (ARCHITECTURE_RE.test(qLower)) {
     const resolved = resolveExplanation(qLower, ctx);
     return make('ArchitectureExplanation', { scope: resolved.scope });
   }
+
+  // Aspect wins over "any project name is a project explanation".
+  // Otherwise "what did he use to build QueryForge?" never reaches stack.
+  const aspect = classifyAnswerAspect(qLower);
+  if (aspect === 'stack' || aspect === 'api') return make('TechnologyExplanation');
+  if (aspect === 'motivation') return make('ProjectExplanation');
 
   // 10. ProjectExplanation — absorbed verbatim from classifyIntent's old
   // 'project' branch, OR an explicit project name mentioned on its own

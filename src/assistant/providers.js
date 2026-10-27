@@ -29,7 +29,7 @@ import {
   DECISION_FIRST_STRATEGIES,
   isEngineeringDetailQuery,
 } from './reasoning.js';
-import { wantsDirectAnswerOnly } from './conversation.js';
+import { classifyAnswerAspect, wantsDirectAnswerOnly } from './conversation.js';
 import { isQueryForgeQuery, matchQueryForgeFacet } from './queryforgeKnowledge.js';
 import { isPlacementProQuery, matchPlacementProFacet } from './placementproKnowledge.js';
 import { isRepoRadarQuery, matchRepoRadarFacet } from './reporadarKnowledge.js';
@@ -1622,6 +1622,10 @@ const LocalProvider = {
     const cMode = ctx?.questionFrame?.conversationMode;
     if (cMode) return false;
     if (isBoundFollowUpQuery(q)) return false;
+    const aspect = classifyAnswerAspect(q);
+    if (aspect === 'stack' || aspect === 'architecture' || aspect === 'motivation' || aspect === 'api' || aspect === 'flow' || aspect === 'yesno') {
+      return false;
+    }
 
     // Engineering / data-flow questions must use CODE-PROVEN facets — never the
     // generic project card, even when they also say "walk me through".

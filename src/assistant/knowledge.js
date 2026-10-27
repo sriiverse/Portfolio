@@ -414,10 +414,25 @@ export function retrieveScoped(query, { limit = 4, entities = [], questionType =
   const brandFocus = entities.some((e) => e.type === 'brand')
     || /\bsriiverse\s*ai\b|\bsriiverseai\b/i.test(qLower);
 
+  const namedProjects = new Set();
+  if (/queryforge/i.test(qLower)) namedProjects.add('queryforge');
+  if (/placement\s*pro|placementpro/i.test(qLower)) namedProjects.add('placementpro');
+  if (/reporadar|repo\s*radar/i.test(qLower)) namedProjects.add('reporadar');
+  for (const entity of entities) {
+    if (entity?.type === 'project' && entity.canonical) {
+      namedProjects.add(String(entity.canonical).toLowerCase());
+    }
+  }
+
   let scored = docs.map((doc) => {
     let score = scoreDoc(doc, queryTokens, queryStems);
     if (brandFocus && doc.kind === 'brand') score += 4;
     if (!wantsContact && doc.kind === 'contact') score = 0;
+    if (namedProjects.size && doc.projectId) {
+      // A named project outranks another project's section that only shares
+      // a generic word such as "architecture".
+      score += namedProjects.has(doc.projectId) ? 8 : -12;
+    }
     return { doc, score };
   });
 

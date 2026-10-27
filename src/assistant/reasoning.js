@@ -30,7 +30,8 @@ import {
   getEngineeringIdentity,
   getIdentityClaimsByFacet,
 } from './identity.js';
-import { classifyConversationMode, isBoundFollowUpQuery } from './conversation.js';
+import { classifyAnswerAspect, classifyConversationMode, isBoundFollowUpQuery } from './conversation.js';
+import { getProject } from './knowledge.js';
 import {
   isQueryForgeQuery,
   matchQueryForgeFacet,
@@ -234,6 +235,9 @@ const CROSS_LENS_FACETS = {
   skill: { queryforge: ['qf-purpose'], placementpro: ['pp-skill-gap', 'pp-ai-model'], reporadar: ['rr-purpose'] },
   heuristic: { queryforge: ['qf-ai-model'], placementpro: ['pp-ai-model', 'pp-roadmap'], reporadar: ['rr-scoring', 'rr-ai-model'] },
   differentiate: { queryforge: ['qf-purpose', 'qf-architecture'], placementpro: ['pp-purpose', 'pp-architecture'], reporadar: ['rr-purpose', 'rr-architecture'] },
+  api: { queryforge: ['qf-api', 'qf-ai-model'], placementpro: ['pp-api', 'pp-ai-model'], reporadar: ['rr-api', 'rr-ai-model'] },
+  stack: { queryforge: ['qf-architecture'], placementpro: ['pp-architecture'], reporadar: ['rr-architecture'] },
+  motivation: { queryforge: ['qf-purpose'], placementpro: ['pp-purpose'], reporadar: ['rr-purpose'] },
   depth: { queryforge: ['qf-ai-model', 'qf-dataflow-generator'], placementpro: ['pp-skill-gap', 'pp-roadmap'], reporadar: ['rr-scoring', 'rr-github'] },
   connect: { queryforge: ['qf-purpose'], placementpro: ['pp-purpose'], reporadar: ['rr-purpose', 'rr-architecture'] },
   premise: { queryforge: ['qf-architecture'], placementpro: ['pp-architecture'], reporadar: ['rr-architecture', 'rr-ai-model'] },
@@ -292,8 +296,13 @@ function resolveCrossProjectQuestion(query, ctx = {}) {
     return null;
   }
 
+  const aspect = classifyAnswerAspect(t);
   let lens = 'differentiate';
-  if (/what would you (improve|change|rebuild)/i.test(t)) lens = 'intent';
+  if (aspect === 'api') lens = 'api';
+  else if (aspect === 'stack') lens = 'stack';
+  else if (aspect === 'motivation') lens = 'motivation';
+  else if (aspect === 'architecture') lens = 'architecture';
+  else if (/what would you (improve|change|rebuild)/i.test(t)) lens = 'intent';
   else if (/^why\??$|^(and )?why\b/i.test(t)) lens = 'why';
   else if (/\bminilm\b/.test(t) || /machine learning|\bml\b|generative|\bllm\b|what model|which model|uses an llm|uses ml/.test(t)) lens = 'model';
   else if (/heuristic|deterministic/.test(t)) lens = 'heuristic';
@@ -312,6 +321,265 @@ function resolveCrossProjectQuestion(query, ctx = {}) {
   return { ids, lens, priorLens: ctx?.memory?.lastCommitment?.lens || null };
 }
 
+const ASPECT_FOCUS = {
+  queryforge: { stack: 'qf-architecture', architecture: 'qf-architecture', motivation: 'qf-purpose', api: 'qf-api', flow: 'qf-dataflow-overview', yesno: 'qf-architecture', switch: 'qf-purpose' },
+  placementpro: { stack: 'pp-architecture', architecture: 'pp-architecture', motivation: 'pp-purpose', api: 'pp-api', flow: 'pp-dataflow-dashboard', yesno: 'pp-architecture', switch: 'pp-purpose' },
+  reporadar: { stack: 'rr-architecture', architecture: 'rr-architecture', motivation: 'rr-purpose', api: 'rr-api', flow: 'rr-user-flow', yesno: 'rr-architecture', switch: 'rr-purpose' },
+};
+
+const DETAIL_TASK = {
+  queryforge: 'queryforge_detail',
+  placementpro: 'placementpro_detail',
+  reporadar: 'reporadar_detail',
+};
+
+/**
+ * Single-project stack, motivation, architecture, and API questions.
+ * Runs before generic facet paste and before the portfolio five-layer fallback.
+ * Returns null when no single project is named, or the aspect is not one of those four.
+ */
+function aspectForBoundFocus(query, focus) {
+  const aspect = classifyAnswerAspect(query);
+  if (aspect) return aspect;
+  if (/architecture$/.test(String(focus || '')) && /\b(built|architect|designed|structured|stack)\b/i.test(String(query || ''))) {
+    return 'architecture';
+  }
+  return null;
+}
+
+function routeNamedProjectAspect(query) {
+  const aspect = classifyAnswerAspect(query);
+  if (!aspect || !ASPECT_FOCUS.queryforge[aspect]) return null;
+  const ids = namedCrossProjectIds(query);
+  if (ids.length !== 1) return null;
+  const id = ids[0];
+  const focus = ASPECT_FOCUS[id]?.[aspect];
+  const task = DETAIL_TASK[id];
+  if (!focus || !task) return null;
+  return { strategy: 'Summarize', task, focus, aspect };
+}
+
+function facetSentences(text) {
+  const stripped = String(text || '')
+    .replace(/^Verified implementation architecture(?:\s*\([^)]*\))?:\s*/i, '')
+    .replace(/^Verified (?:API surface|HTTP surface|product API):\s*/i, '');
+  return stripped
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+const STACK_SENTENCE = /frontend|backend|react|fastapi|flask|next\.?js|gemini|groq|vite|uvicorn|octokit|websocket|database|sqlite|postgres|minilm|networkx|sqlalchemy/i;
+
+function shapeArchitectureAspect(facet, aspect) {
+  const sentences = facetSentences(facet?.text);
+  if (!sentences.length) return null;
+  if (aspect === 'architecture') return sentences.join('\n\n');
+  if (aspect === 'stack') {
+    const kept = sentences.filter((s) => STACK_SENTENCE.test(s));
+    return (kept.length ? kept : sentences).join(' ');
+  }
+  return null;
+}
+
+function speakProjectMotivation(projectId) {
+  const proj = getProject(projectId);
+  if (!proj?.problem) return null;
+  const benefit = String(proj.solution || '').split(/(?<=\.)\s+/)[0].trim();
+  return [
+    `${proj.name} was built around a documented problem: ${proj.problem}`,
+    benefit ? `What it is meant to do: ${benefit}` : '',
+    'Why a specific framework or provider was chosen is not documented.',
+  ].filter(Boolean).join(' ');
+}
+
+function speakApiContrast(ids) {
+  const blocks = [];
+  for (const id of ids) {
+    const project = CROSS_PROJECT_CATALOG.find((p) => p.id === id);
+    if (!project) continue;
+    const api = project.facets.find((f) => f.id === ASPECT_FOCUS[id].api);
+    const modelId = { queryforge: 'qf-ai-model', placementpro: 'pp-ai-model', reporadar: 'rr-ai-model' }[id];
+    const model = project.facets.find((f) => f.id === modelId);
+    const modelSentences = facetSentences(model?.text).slice(0, id === 'queryforge' ? 3 : 2);
+    const routeSentences = facetSentences(api?.text).slice(0, 2);
+    const parts = [`**${project.name}.**`];
+    if (modelSentences.length) parts.push(`External or library intelligence: ${modelSentences.join(' ')}`);
+    if (routeSentences.length) parts.push(`Internal application routes: ${routeSentences.join(' ')}`);
+    if (id === 'reporadar') {
+      const github = project.facets.find((f) => f.id === 'rr-github');
+      const third = facetSentences(github?.text)[0];
+      if (third) parts.push(`Third-party integration: ${third}`);
+    }
+    blocks.push(parts.join(' '));
+  }
+  if (!blocks.length) return null;
+  return [
+    'External provider APIs, internal application routes, and third-party integrations are different things.',
+    ...blocks,
+  ].join('\n\n');
+}
+
+function speakStackContrast(ids) {
+  const blocks = ids.map((id) => {
+    const project = CROSS_PROJECT_CATALOG.find((p) => p.id === id);
+    const facet = project?.facets.find((f) => f.id === ASPECT_FOCUS[id].stack);
+    let shaped = shapeArchitectureAspect(facet, 'stack');
+    if (id === 'queryforge') shaped = supplementQueryForge('stack', shaped);
+    return shaped ? `**${project.name}.** ${shaped}` : '';
+  }).filter(Boolean);
+  return blocks.join('\n\n');
+}
+
+function projectIdFromDetailTask(task) {
+  if (String(task).startsWith('queryforge')) return 'queryforge';
+  if (String(task).startsWith('placementpro')) return 'placementpro';
+  if (String(task).startsWith('reporadar')) return 'reporadar';
+  return null;
+}
+
+const YESNO_TECHS = [
+  { source: 'fastapi', label: 'FastAPI' },
+  { source: 'flask', label: 'Flask' },
+  { source: 'uvicorn', label: 'Uvicorn' },
+  { source: 'next\\.?js', label: 'Next.js' },
+  { source: 'gemini', label: 'Gemini' },
+  { source: 'groq', label: 'Groq' },
+  { source: 'react', label: 'React' },
+  { source: 'vite', label: 'Vite' },
+];
+
+function askedTechnology(query) {
+  const t = String(query || '');
+  const hits = YESNO_TECHS.filter((tech) => new RegExp(`\\b${tech.source}\\b`, 'i').test(t));
+  if (!hits.length) return null;
+  const aimed = t.match(/\b(?:built with|use|uses|using)\s+([a-z0-9.+-]+)/i);
+  if (aimed) {
+    const aimedHit = hits.find((tech) => new RegExp(`^${tech.source}$`, 'i').test(aimed[1]));
+    if (aimedHit) return aimedHit;
+  }
+  return hits[0];
+}
+
+function technologyClause(sentence, preferred) {
+  const parts = String(sentence || '').split(/;/).map((part) => part.trim()).filter(Boolean);
+  const hit = parts.find((part) => preferred.test(part));
+  return (hit || sentence || '').replace(/\.$/, '');
+}
+
+/**
+ * Direct yes/no for a named technology. Uses the architecture facet's own
+ * sentences, and stops after the clause that answers the question.
+ */
+function speakYesNoTechnology(projectId, query, facet) {
+  const tech = askedTechnology(query);
+  const name = getProject(projectId)?.name || 'This project';
+  const sentences = facetSentences(facet?.text);
+  if (!tech) {
+    return `The inspected records for ${name} do not establish a yes or no for that technology.`;
+  }
+  const re = new RegExp(`\\b${tech.source}\\b`, 'i');
+  const hits = sentences.filter((sentence) => re.test(sentence));
+  const denial = hits.find((sentence) => /\b(not|no|without|isn't|is not|outdated)\b/i.test(sentence));
+  const affirm = hits.find((sentence) => sentence !== denial);
+  if (denial && !affirm) {
+    const used = sentences.find((sentence) => sentence !== denial && /\b(backend|frontend|fastapi|uvicorn|next\.?js|flask)\b/i.test(sentence));
+    const usedBit = used
+      ? ` The inspected implementation uses ${technologyClause(used, /fastapi|uvicorn|next\.?js|flask|backend/i)}.`
+      : '';
+    return `No. ${denial}${usedBit}`;
+  }
+  if (affirm) {
+    return `Yes. The inspected ${name} implementation uses ${technologyClause(affirm, re)}.`;
+  }
+  return `The inspected records for ${name} do not establish whether it uses ${tech.label}.`;
+}
+
+function speakProjectSwitch(projectId, facet) {
+  const sentences = facetSentences(facet?.text).slice(0, 2);
+  if (!sentences.length) return null;
+  return sentences.join(' ');
+}
+
+function coreStackSentence(id) {
+  const project = CROSS_PROJECT_CATALOG.find((p) => p.id === id);
+  const facet = project?.facets.find((f) => f.id === ASPECT_FOCUS[id]?.architecture);
+  const sentences = facetSentences(facet?.text);
+  const raw = sentences.find((sentence) => /\bbackend\b|fastapi|flask|next\.?js|no separate python/i.test(sentence)) || '';
+  const clause = raw.split(/;/).map((part) => part.trim()).find((part) => /backend|fastapi|flask|next\.?js/i.test(part));
+  return clause || raw;
+}
+
+function speakProductDifference(ids) {
+  const blocks = [];
+  for (const id of ids) {
+    const project = CROSS_PROJECT_CATALOG.find((p) => p.id === id);
+    if (!project) continue;
+    const purpose = project.facets.find((f) => f.id === ASPECT_FOCUS[id]?.switch);
+    const summary = facetSentences(purpose?.text).slice(0, 2).join(' ');
+    const tech = coreStackSentence(id);
+    const technical = tech ? `Core technical distinction: ${tech}` : '';
+    if (summary) blocks.push([`**${project.name}.** ${summary}`, technical].filter(Boolean).join(' '));
+  }
+  if (!blocks.length) return null;
+  return blocks.join('\n\n');
+}
+
+function speakFacetForAspect(task, facet, classification, query) {
+  const aspect = classification?.aspect || null;
+  const projectId = projectIdFromDetailTask(task);
+  if (!aspect) return facet?.text || null;
+  if (aspect === 'yesno' && projectId) {
+    return speakYesNoTechnology(projectId, query, facet);
+  }
+  if (aspect === 'switch' && projectId) {
+    const spoken = speakProjectSwitch(projectId, facet);
+    if (spoken) return spoken;
+  }
+  if (aspect === 'motivation' && projectId) {
+    const spoken = speakProjectMotivation(projectId);
+    if (spoken) return spoken;
+  }
+  if (aspect === 'api' && projectId) {
+    const spoken = speakApiContrast([projectId]);
+    if (spoken) return spoken;
+  }
+  if (aspect === 'flow' && facet?.text) {
+    const name = projectId ? getProject(projectId)?.name : '';
+    if (name && !new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(facet.text)) {
+      return `${name}. ${facet.text}`;
+    }
+    return facet.text;
+  }
+  if ((aspect === 'stack' || aspect === 'architecture') && facet) {
+    let shaped = shapeArchitectureAspect(facet, aspect);
+    if (projectId === 'queryforge') shaped = supplementQueryForge(aspect, shaped);
+    const name = projectId ? getProject(projectId)?.name : '';
+    if (shaped && name && !new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(shaped)) {
+      shaped = `${name}: ${shaped}`;
+    }
+    if (shaped) return shaped;
+  }
+  return facet?.text || null;
+}
+
+/** Facts that live on a sibling QueryForge facet, not in the architecture paragraph. */
+function supplementQueryForge(aspect, shaped) {
+  if (!shaped || (aspect !== 'stack' && aspect !== 'architecture')) return shaped;
+  const extra = [];
+  if (!/heuristic/i.test(shaped)) {
+    const model = QUERYFORGE_FACETS.find((f) => f.id === 'qf-ai-model');
+    const line = facetSentences(model?.text).find((s) => /heuristic/i.test(s));
+    if (line) extra.push(line);
+  }
+  if (!/simulat/i.test(shaped)) {
+    const agent = QUERYFORGE_FACETS.find((f) => f.id === 'qf-pro-agent');
+    const line = facetSentences(agent?.text).find((s) => /simulat/i.test(s));
+    if (line) extra.push(line);
+  }
+  return extra.length ? `${shaped} ${extra.join(' ')}` : shaped;
+}
+
 function facetParagraphs(ids, lens) {
   const map = CROSS_LENS_FACETS[lens] || CROSS_LENS_FACETS.differentiate;
   const blocks = [];
@@ -327,6 +595,22 @@ function facetParagraphs(ids, lens) {
 function speakCrossProject(query, classification) {
   const ids = classification?.projectIds || [];
   const lens = classification?.lens || 'differentiate';
+  if (lens === 'api') {
+    const spoken = speakApiContrast(ids);
+    if (spoken) return spoken;
+  }
+  if (lens === 'differentiate' && /\bdifference between\b/i.test(String(query || '')) && !/\barchitect/i.test(String(query || ''))) {
+    const spoken = speakProductDifference(ids);
+    if (spoken) return spoken;
+  }
+  if (lens === 'motivation') {
+    const blocks = ids.map((id) => speakProjectMotivation(id)).filter(Boolean);
+    if (blocks.length) return blocks.join('\n\n');
+  }
+  if (lens === 'stack') {
+    const spoken = speakStackContrast(ids);
+    if (spoken) return spoken;
+  }
   if (lens === 'intent') {
     const limits = facetParagraphs(ids, 'intent');
     const lead = 'Improvement priorities are not documented as CODE-PROVEN design intent, so I will not invent what to build next. Documented limitations are not a chosen roadmap.';
@@ -452,6 +736,15 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     const ppBound = boundId === 'placementpro' || /placement/i.test(String(boundId));
     const rrBound = boundId === 'reporadar' || /reporadar/i.test(String(boundId));
 
+    // Bare "Why?" has no documented motive. A bound project makes the
+    // referent the previous answer; the records still do not establish a reason.
+    if (/^(?:and )?why\??$/i.test(t)) {
+      if (qfBound) return { strategy: 'Summarize', task: 'queryforge_unknown' };
+      if (ppBound) return { strategy: 'Summarize', task: 'placementpro_unknown' };
+      if (rrBound) return { strategy: 'Summarize', task: 'reporadar_unknown' };
+      return { strategy: 'Summarize', task: 'why_clarify' };
+    }
+
     // QueryForgeAI: stay on CODE-PROVEN facets — never generic five-layer arch_why
     // (that spine still names Flask and would contradict the inspected FastAPI backend).
     if (qfBound) {
@@ -479,7 +772,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
       }
 
       if (/how\b|how does|how did|how is|work\??$|architect|built|designed|structured|generat|optim|schema|fastapi|stack|explain\s*analyze|\/analyze/i.test(t)) {
-        return { strategy: 'Summarize', task: 'queryforge_detail', focus };
+        return { strategy: 'Summarize', task: 'queryforge_detail', focus, aspect: aspectForBoundFocus(query, focus) };
       }
     }
 
@@ -512,7 +805,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
       }
 
       if (/how\b|how does|how did|how is|work\??$|architect|built|designed|structured|generat|model|skill|graph|auth|database|stack|compan|cache|roadmap|minilm|llm/i.test(t)) {
-        return { strategy: 'Summarize', task: 'placementpro_detail', focus };
+        return { strategy: 'Summarize', task: 'placementpro_detail', focus, aspect: aspectForBoundFocus(query, focus) };
       }
     }
 
@@ -545,7 +838,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
       }
 
       if (/how\b|how does|how did|how is|work\??$|architect|built|designed|structured|score|health|bus|fetch|github|clone|model|llm|cache|stored|stack|next|octokit|analy/i.test(t)) {
-        return { strategy: 'Summarize', task: 'reporadar_detail', focus };
+        return { strategy: 'Summarize', task: 'reporadar_detail', focus, aspect: aspectForBoundFocus(query, focus) };
       }
     }
 
@@ -567,7 +860,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     if (/how\b|how does|how did|how is|work\??$/i.test(t)) {
       return { strategy: 'Explain', task: 'arch_why' };
     }
-    if (/why that|why this|^(and )?why\b|so why|chose|choose/i.test(t)
+    if (/why that|why this|so why|chose|choose/i.test(t)
       || /interview_first|recruiter_impress|best_work|faang_interview|demo_|keep_two|recommend/i.test(prevTask)) {
       return { strategy: 'Justify', task: 'followup_why_pick' };
     }
@@ -704,6 +997,14 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     }
   }
 
+  // Aspect (stack, motivation, architecture, API) before facet paste and
+  // before the portfolio five-layer fallback. Two named projects already
+  // returned above with a dimension-specific lens.
+  {
+    const aspectRoute = routeNamedProjectAspect(t);
+    if (aspectRoute) return aspectRoute;
+  }
+
   // QueryForge CODE-PROVEN facets / explicit unknowns — before generic why_* only when
   // the query is QueryForge-scoped (or a QF-unique engineering cue).
   {
@@ -796,8 +1097,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Summarize', task: 'project_overview' };
   }
 
-  if (/how (was|is|did) .{0,40}(built|designed|architect)/i.test(t)
-    || (/how (was|is) .+ built/i.test(t) && /queryforge|reporadar|placement/i.test(t))) {
+  if ((/how (was|is|did) .{0,40}(built|designed|architect)/i.test(t)
+    || (/how (was|is) .+ built/i.test(t) && /queryforge|reporadar|placement/i.test(t)))
+    && namedCrossProjectIds(t).length === 0) {
     return { strategy: 'Explain', task: 'arch_why' };
   }
 
@@ -837,6 +1139,37 @@ export function classifyReasoningStrategy(query, ctx = {}) {
 
   if (isGenuineProjectOverviewQuery(t)) {
     return { strategy: 'Summarize', task: 'project_overview' };
+  }
+
+  if (/^(?:and )?why\??$/i.test(t)) {
+    return { strategy: 'Summarize', task: 'why_clarify' };
+  }
+
+  if (/\bwhat about\b/i.test(t)) {
+    const switched = namedCrossProjectIds(t);
+    if (switched.length === 1) {
+      const id = switched[0];
+      return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].switch, aspect: 'switch' };
+    }
+  }
+
+  // Only "how does <project> work", not "how does <subsystem> work in <project>".
+  const flowIds = namedCrossProjectIds(t);
+  const projectSubject = '(?:queryforgeai|queryforge|reporadarai|reporadar|repo\\s*radar|placement\\s*pro\\+?)';
+  const wholeProjectFlow = new RegExp(`\\bhow (?:does|do|did) (?:the |an? )?(?:${projectSubject})(?:\\s+actually)?\\s+works?\\b`, 'i').test(t);
+  if (flowIds.length === 1 && wholeProjectFlow) {
+    const id = flowIds[0];
+    return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].flow, aspect: 'flow' };
+  }
+
+  if (/\bhow (?:does|do) (?:it|this|that) work\b/i.test(t) && flowIds.length === 0) {
+    return { strategy: 'Summarize', task: 'why_clarify' };
+  }
+
+  // Supported project questions whose plan would otherwise be an empty DirectAnswer.
+  if (flowIds.length === 1 && (qType === 'ProjectExplanation' || qType === 'ArchitectureExplanation')) {
+    const id = flowIds[0];
+    return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].switch, aspect: 'switch' };
   }
 
   return { strategy: 'Describe', task: null };
@@ -1454,9 +1787,8 @@ function opSummarize(ctx, { task }) {
         `I can answer verified mechanics instead: user inputs, /generate-sql and /analyze flows, Gemini/Groq behavior, and cloud-path limitations (no live DB, no real EXPLAIN).`,
       ].join('\n\n');
     }
-    if (facet?.text) {
-      return facet.text;
-    }
+    const shaped = speakFacetForAspect(task, facet, ctx.classification, ctx.query);
+    if (shaped) return shaped;
     return [
       `I don't have a verified facet for that QueryForgeAI detail yet.`,
       `Ask about user inputs, generator/optimizer data flow, models, APIs, validation, failures, or cloud-path limitations.`,
@@ -1474,9 +1806,8 @@ function opSummarize(ctx, { task }) {
         `I can answer verified mechanics instead: structured profile → MiniLM/graph skill-gap, deterministic 12-week templates, JWT auth, SQLite/Postgres persistence boundaries, and in-memory company matching.`,
       ].join('\n\n');
     }
-    if (facet?.text) {
-      return facet.text;
-    }
+    const shaped = speakFacetForAspect(task, facet, ctx.classification, ctx.query);
+    if (shaped) return shaped;
     return [
       `I don't have a verified facet for that Placement Pro+ detail yet.`,
       `Ask about skill-gap, MiniLM, the NetworkX graph, roadmap templates, auth, caching, or what is not persisted.`,
@@ -1506,9 +1837,8 @@ function opSummarize(ctx, { task }) {
         `The inspected implementation is Next.js 14 + GitHub REST + heuristics — not FastAPI, not an LLM. I can answer verified mechanics instead: URL ingest, Octokit caps, health/bus-factor formulas, cache, and failure modes.`,
       ].join('\n\n');
     }
-    if (facet?.text) {
-      return facet.text;
-    }
+    const shaped = speakFacetForAspect(task, facet, ctx.classification, ctx.query);
+    if (shaped) return shaped;
     return [
       `I don't have a verified facet for that RepoRadarAI detail yet.`,
       `Ask about ingestion, GitHub REST calls, health scoring, bus factor, caching, or what the product does not do (clone, LLM, source architecture).`,
@@ -1652,13 +1982,16 @@ function opJustify(ctx, { task }) {
     } else if (/interview_first|recruiter|best_work/i.test(prev)) {
       why = `You can open a live demo${pick?.project?.repo ? ' and the public repo' : ''} in the same breath — API/UI split is easy to walk without a long setup.`;
     } else {
-      why = `It's the commitment I just made — strongest demo/story for what we were ranking.`;
+      return [
+        `The project records do not establish why that choice was made.`,
+        `I will not infer a personal motive that is not written down.`,
+      ].join('\n\n');
     }
     return speak(
       ctx.strategy,
-      `Because ${nm(pick)} is the one I committed to for that ask.`,
+      `The previous answer selected ${nm(pick)} by the criterion already stated.`,
       why,
-      `If you want the deeper engineering probe instead, say so and I'll switch to that lens.`,
+      `I will not add a personal motive that the project records do not establish.`,
     );
   }
 
@@ -1672,6 +2005,13 @@ function opJustify(ctx, { task }) {
 export function synthesizeReasoning(classification, query, ctx = {}) {
   const task = classification?.task;
   if (!task || task === 'compare_passthrough') return null;
+  if (task === 'why_clarify') {
+    return [
+      'Which decision should I explain?',
+      'Name the project, or say whether you mean why it exists, why the architecture is shaped that way, or why a technology was chosen.',
+      'I will only use a reason the project records actually establish.',
+    ].join(' ');
+  }
 
   const graph = getEngineeringGraph();
   const records = getDecisionRecords(graph);

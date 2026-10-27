@@ -49,7 +49,7 @@ import { decideTool, runTool, runProactiveTool, setKnowledgeRef } from './assist
 import { getProvider } from './assistant/providers.js';
 import { looksLikeJobDescription } from './assistant/jdmatch.js';
 import { interview } from './assistant/interview.js';
-import { buildQuestionFrame, enrichBoundContext, wantsDirectAnswerOnly } from './assistant/conversation.js';
+import { buildQuestionFrame, enrichBoundContext, suggestFollowupAngles, wantsDirectAnswerOnly } from './assistant/conversation.js';
 import { resolveEntities, assessConfidence } from './assistant/entities.js';
 import { buildResponsePlan } from './assistant/planning.js';
 import {
@@ -212,7 +212,11 @@ function buildFollowups(intent, payload, focusProject, questionFrame) {
   const f = [];
   const rawQ = questionFrame?.rawQuery || '';
   if (wantsDirectAnswerOnly(rawQ)) return [];
-  if (payload?._portfolioIntelligence === 'undocumented_detail'
+  const earlyProj = payload?.project
+    ? payload.project
+    : (focusProject ? knowledge.getProject(focusProject) : null);
+  const aspectAngles = suggestFollowupAngles(rawQ, earlyProj?.name);
+  if (!aspectAngles && (payload?._portfolioIntelligence === 'undocumented_detail'
     || payload?._portfolioIntelligence === 'queryforge_detail'
     || payload?._portfolioIntelligence === 'queryforge_unknown'
     || payload?._portfolioIntelligence === 'placementpro_detail'
@@ -221,7 +225,7 @@ function buildFollowups(intent, payload, focusProject, questionFrame) {
     || payload?._reasoningStrategy?.task === 'queryforge_detail'
     || payload?._reasoningStrategy?.task === 'queryforge_unknown'
     || payload?._reasoningStrategy?.task === 'placementpro_detail'
-    || payload?._reasoningStrategy?.task === 'placementpro_unknown') {
+    || payload?._reasoningStrategy?.task === 'placementpro_unknown')) {
     return [];
   }
   const proj = payload?.project
@@ -241,7 +245,9 @@ function buildFollowups(intent, payload, focusProject, questionFrame) {
   // has no concept of get their own, more relevant suggestions first. Only
   // intercepts the moves that don't already have a good intent-based case
   // (e.g. project-scoped 'comparison' still falls through to the switch).
-  if (questionFrame?.move === 'greeting') {
+  if (aspectAngles?.length) {
+    f.push(...aspectAngles);
+  } else if (questionFrame?.move === 'greeting') {
     f.push('Who is Sudhanshu beyond his resume?', 'What is SRIIVERSEAI?', 'Tell me about QueryForgeAI');
   } else if (questionFrame?.move === 'identity') {
     f.push('What is SRIIVERSEAI?', 'Tell me about QueryForgeAI');
