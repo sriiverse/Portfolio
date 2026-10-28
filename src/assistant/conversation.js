@@ -221,6 +221,9 @@ export function isBoundFollowUpQuery(query) {
   if (/^what model does (that|it|this) use\??$/i.test(t)) return true;
   if (/^why (that |this )?(architecture|stack|design|choice)\??$/i.test(t)) return true;
   if (/^what (database|db|stack|frontend|backend) does it use\??$/i.test(t)) return true;
+  if (/^(?:and )?(?:what about )?(?:its |the )?backend\??$/i.test(t)) return true;
+  if (/^which technology powers (?:its |the )?backend\??$/i.test(t)) return true;
+  if (/^tell me about its server[- ]side\??$/i.test(t)) return true;
   if (/^what would you (improve|change|rebuild)( next)?\??$/i.test(t)) return true;
   if (/^why did (he|sudhanshu|you) (choose|build|make)\b/i.test(t) && t.length < 80) return true;
   if (/\bso why did\b|\bwhy (did|does|would).{0,40}\bkeep\b/i.test(t)) return true;
@@ -231,6 +234,33 @@ export function isBoundFollowUpQuery(query) {
   if (/^(?:is|does|did|was|are|do) (?:it|that|this|he)\b/i.test(t) && /\b(?:built with|use|uses|using)\b/i.test(t)) return true;
   if (/^how does (?:its |the )?(?:skill-?gap|roadmap)\b/i.test(t)) return true;
   return false;
+}
+
+/**
+ * An explicit request for the full backend record, not a short follow-up.
+ * "Explain the complete backend architecture" qualifies. "What about the backend?" does not.
+ */
+export function asksBackendDepth(query) {
+  const t = String(query || '').toLowerCase();
+  if (!/\b(?:backends?|server[- ]side)\b/.test(t)) return false;
+  return /\b(?:complete|entire|in detail|detailed|walk(?: me)? through|full)\b/.test(t)
+    || /\bexplain how\b/.test(t)
+    || /\bincluding\b/.test(t);
+}
+
+/**
+ * A question about one project's backend, not a comparison, a full stack tour,
+ * or an explicit request for the complete architecture.
+ * "What about the backend?" qualifies. "What technologies did he use?" does not.
+ */
+export function isBackendAspectQuery(query) {
+  const t = String(query || '').toLowerCase();
+  if (asksBackendDepth(t)) return false;
+  if (/\b(compare|vs\.?|versus|difference between|differ(?:s|ed)?|different from|architecturally)\b/.test(t)) return false;
+  if (/\b(tech(?:nology)? stack|what technologies|technologies (?:does|did)|what did (?:he|you|sudhanshu) use|used to build|use to build)\b/.test(t)) return false;
+  if (/\b(backend engineering|backend team|scalable backend|backend or frontend|frontend or backend)\b/.test(t)) return false;
+  if (/\bstronger\b.{0,24}\bbackend\b/.test(t)) return false;
+  return /\b(?:backends?|server[- ]side)\b/.test(t);
 }
 
 /** Closed "is/does … use/built with …" question about a known technology. */
@@ -270,7 +300,12 @@ export function classifyAnswerAspect(query) {
   // Closed technology questions get a yes/no before the full stack paragraph.
   // A bare "Is it built with Flask?" stays unresolved here until the bound
   // project is known; the named form is decided immediately.
-  if (isYesNoTechnologyAsk(t) && namedProject) return 'yesno';
+  // RepoRadar's Gemini/OpenAI question is about its model record, not a stack yes/no.
+  const repoRadarModel = /reporadar|repo\s*radar/i.test(t) && /\b(gemini|groq|openai|llm|generative)\b/i.test(t);
+  if (isYesNoTechnologyAsk(t) && namedProject && !repoRadarModel) return 'yesno';
+
+  if (isBackendAspectQuery(t)) return 'stack';
+  if (asksBackendDepth(t) && namedProject) return 'architecture';
 
   const stack = /\b(tech(?:nology)? stack|(?:the )?stack (?:for|of)|what technologies|what tools|technologies (?:does|did)|what did (?:he|you|sudhanshu) use|used to build|use to build|built with)\b/i.test(t)
     || /\bwhat\b.{0,48}\b(?:use|used|using)\b.{0,32}\bbuild\b/i.test(t);

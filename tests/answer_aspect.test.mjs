@@ -534,6 +534,91 @@ test('an explicit portfolio-wording question still reports the Flask discrepancy
   assert(/outdated|portfolio wording/i.test(text), text);
 });
 
+test('RepoRadar generative-model questions use the documented denial', () => {
+  const variants = [
+    'Does RepoRadar use a generative AI model?',
+    'Does RepoRadar use generative AI?',
+    'Does RepoRadar use an LLM?',
+    'Does RepoRadar use Gemini or OpenAI?',
+  ];
+  for (const q of variants) {
+    const { reasoning, text } = askInContext(q, memoryStub);
+    assert(reasoning.task === 'reporadar_detail', `${q} task ${reasoning.task}`);
+    assert(reasoning.focus === 'rr-ai-model', `${q} focus ${reasoning.focus}`);
+    assert(/does not use a generative AI model/i.test(text), text);
+    assert(!/not documented/i.test(text), text);
+  }
+});
+
+test('a backend follow-up stays on the active project and answers the backend', () => {
+  const queryforge = boundMemory('queryforge', 'queryforge_detail');
+  const variants = [
+    'What about the backend?',
+    'And the backend?',
+    'What backend does it use?',
+    'Which technology powers the backend?',
+    'Tell me about its server side.',
+  ];
+  for (const q of variants) {
+    const { bound, reasoning, text } = askInContext(q, queryforge);
+    assert(bound.focusProject === 'queryforge', `${q} focus ${bound.focusProject}`);
+    assert(reasoning.task === 'queryforge_detail', `${q} task ${reasoning.task}`);
+    assert(reasoning.focus === 'qf-architecture', `${q} focus ${reasoning.focus}`);
+    assert(/FastAPI/i.test(text) && /Uvicorn/i.test(text), text);
+    assert(!/query generator|SQL\/Mongo/i.test(text), text);
+    assert(!/outdated|portfolio wording/i.test(text), text);
+    assert(!/React \+ Vite/i.test(text), text);
+  }
+
+  const placement = askInContext('What about the backend?', boundMemory('placementpro', 'placementpro_detail'));
+  assert(placement.bound.focusProject === 'placementpro', placement.bound.focusProject);
+  assert(/Flask 3\.1/i.test(placement.text), placement.text);
+  assert(!/FastAPI/i.test(placement.text), placement.text);
+
+  const radar = askInContext('What about the backend?', boundMemory('reporadar', 'reporadar_detail'));
+  assert(radar.bound.focusProject === 'reporadar', radar.bound.focusProject);
+  assert(/Next\.js/i.test(radar.text) && /\/api\/analyze/i.test(radar.text), radar.text);
+  assert(!/Flask|FastAPI/i.test(radar.text), radar.text);
+
+  const switched = askInContext('What backend does QueryForgeAI use?', boundMemory('placementpro', 'placementpro_detail'));
+  assert(switched.reasoning.task === 'queryforge_detail', switched.reasoning.task);
+  assert(/FastAPI/i.test(switched.text) && /Uvicorn/i.test(switched.text), switched.text);
+  assert(!/Flask 3\.1/i.test(switched.text), switched.text);
+});
+
+test('explicit backend depth keeps the documented architecture', () => {
+  const detailed = [
+    'Explain the complete backend architecture of QueryForgeAI.',
+    "Describe QueryForgeAI's backend architecture in detail.",
+    'Walk me through the entire QueryForgeAI backend.',
+    "Explain how QueryForgeAI's backend works, including its providers and CLI path.",
+  ];
+  for (const q of detailed) {
+    const { reasoning, text } = askInContext(q, memoryStub);
+    assert(reasoning.task === 'queryforge_detail', `${q} task ${reasoning.task}`);
+    assert(reasoning.aspect === 'architecture', `${q} aspect ${reasoning.aspect}`);
+    assert(reasoning.focus === 'qf-architecture', `${q} focus ${reasoning.focus}`);
+    assert(/FastAPI/i.test(text) && /Uvicorn/i.test(text), text);
+    assert(/Gemini/i.test(text) && /Groq/i.test(text), text);
+    assert(/WebSocket/i.test(text), text);
+    assert(/database driver|no database/i.test(text), text);
+    assert(!/outdated|portfolio wording/i.test(text), text);
+    assert(text.length > 300, `${q} was over-shortened (${text.length})`);
+  }
+
+  const compared = askInContext('Compare the backends of QueryForgeAI and Placement Pro+.', memoryStub);
+  assert(compared.reasoning.task === 'cross_project_compare', compared.reasoning.task);
+  assert(/FastAPI/i.test(compared.text) && /Flask 3\.1/i.test(compared.text), compared.text);
+  assert(/QueryForgeAI/i.test(compared.text) && /Placement Pro/i.test(compared.text), compared.text);
+
+  const stack = askInContext('What technologies were used across the full QueryForgeAI stack?', memoryStub);
+  assert(stack.reasoning.task === 'queryforge_detail', stack.reasoning.task);
+  assert(stack.reasoning.aspect === 'stack', stack.reasoning.aspect);
+  assert(/React/i.test(stack.text) && /Vite/i.test(stack.text), stack.text);
+  assert(/FastAPI/i.test(stack.text) && /Uvicorn/i.test(stack.text), stack.text);
+  assert(/Gemini/i.test(stack.text) && /Groq/i.test(stack.text), stack.text);
+});
+
 test('follow-ups after yes/no and Placement architecture stay on the project', () => {
   const flask = suggestFollowupAngles('Is QueryForgeAI built with Flask?', 'QueryForgeAI');
   assert(flask?.some((item) => /SQL generation|live database|AI providers/i.test(item)), flask?.join(' | '));

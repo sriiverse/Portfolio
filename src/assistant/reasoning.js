@@ -30,7 +30,7 @@ import {
   getEngineeringIdentity,
   getIdentityClaimsByFacet,
 } from './identity.js';
-import { classifyAnswerAspect, classifyConversationMode, isBoundFollowUpQuery, isYesNoTechnologyAsk } from './conversation.js';
+import { classifyAnswerAspect, classifyConversationMode, isBackendAspectQuery, isBoundFollowUpQuery, isYesNoTechnologyAsk } from './conversation.js';
 import { getProject } from './knowledge.js';
 import {
   isQueryForgeQuery,
@@ -387,11 +387,25 @@ function shapeArchitectureAspect(facet, aspect, query) {
     return (kept.length ? kept : sentences).join('\n\n');
   }
   if (aspect === 'stack') {
+    if (isBackendAspectQuery(query)) {
+      const backend = backendClauseFromSentences(sentences);
+      if (backend) return backend;
+    }
     const stackSentences = sentences.filter((s) => STACK_SENTENCE.test(s));
     const kept = stackSentences.filter((s) => !isUnaskedStackCaveat(s, query));
     return (kept.length ? kept : stackSentences).join(' ');
   }
   return null;
+}
+
+function backendClauseFromSentences(sentences) {
+  for (const sentence of sentences) {
+    if (isPortfolioDiscrepancySentence(sentence)) continue;
+    const parts = String(sentence).split(/;/).map((part) => part.trim()).filter(Boolean);
+    const hit = parts.find((part) => /\bbackend\b|\bfastapi\b|\buvicorn\b|\bflask\b|no separate python/i.test(part));
+    if (hit) return cleanClause(hit);
+  }
+  return '';
 }
 
 function isPortfolioDiscrepancySentence(sentence) {
@@ -851,6 +865,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     // QueryForgeAI: stay on CODE-PROVEN facets — never generic five-layer arch_why
     // (that spine still names Flask and would contradict the inspected FastAPI backend).
     if (qfBound) {
+      if (isBackendAspectQuery(t)) {
+        return { strategy: 'Summarize', task: 'queryforge_detail', focus: 'qf-architecture', aspect: 'stack' };
+      }
       if (/hardest/i.test(t)) {
         return { strategy: 'Explain', task: 'probe_hardest' };
       }
@@ -880,6 +897,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     }
 
     if (ppBound) {
+      if (isBackendAspectQuery(t)) {
+        return { strategy: 'Summarize', task: 'placementpro_detail', focus: 'pp-architecture', aspect: 'stack' };
+      }
       if (/hardest/i.test(t)) {
         return { strategy: 'Summarize', task: 'placementpro_unknown' };
       }
@@ -913,6 +933,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     }
 
     if (rrBound) {
+      if (isBackendAspectQuery(t)) {
+        return { strategy: 'Summarize', task: 'reporadar_detail', focus: 'rr-architecture', aspect: 'stack' };
+      }
       if (/hardest/i.test(t)) {
         return { strategy: 'Summarize', task: 'reporadar_unknown' };
       }

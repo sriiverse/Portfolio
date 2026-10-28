@@ -202,6 +202,7 @@ export const REPORADAR_FACETS = [
       'which model',
       'does reporadar use an llm',
       'does reporadar use.{0,20}(gemini|groq|openai|ollama)',
+      'generative(?:\\s+ai)?(?:\\s+model)?',
       'embedding',
       'vector (db|database)',
       'rag',
@@ -476,7 +477,7 @@ export function matchRepoRadarFacet(query) {
     if (unk) return unk;
   }
 
-  if (scoped && /\b(llm|gemini|groq|openai|ollama|what model|which model|embedding|rag|vector database|use (an? )?ai)\b/i.test(t)
+  if (scoped && /\b(llm|gemini|groq|openai|ollama|what model|which model|embedding|rag|vector database|generative(?:\s+ai)?(?:\s+model)?|use (?:an? |a )?(?:generative\s+)?ai)\b/i.test(t)
     && !/health score|bus factor|formula|fastapi/i.test(t)) {
     const ai = REPORADAR_FACETS.find((f) => f.id === 'rr-ai-model');
     if (ai) return ai;
