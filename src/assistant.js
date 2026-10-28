@@ -476,6 +476,37 @@ export function initAssistant() {
   navBtn && navBtn.addEventListener('click', open);
   footBtn && footBtn.addEventListener('click', open);
   closeBtn && closeBtn.addEventListener('click', close);
+
+  // The panel is position:fixed and sized from the layout viewport. On iOS
+  // the keyboard shrinks the visual viewport instead, so lift the panel
+  // while it is open. Inline sizes are cleared when the keyboard closes
+  // and the stylesheet safe-area offset applies again.
+  const vv = window.visualViewport;
+  const syncToVisualViewport = () => {
+    if (!vv || !panel.classList.contains('is-open')) {
+      panel.style.bottom = '';
+      panel.style.height = '';
+      panel.style.maxHeight = '';
+      return;
+    }
+    const overlap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    if (overlap < 40) {
+      panel.style.bottom = '';
+      panel.style.height = '';
+      panel.style.maxHeight = '';
+      return;
+    }
+    const next = Math.max(280, Math.min(vv.height - 24, 600));
+    panel.style.bottom = `${Math.round(overlap + 8)}px`;
+    panel.style.height = `${Math.round(next)}px`;
+    panel.style.maxHeight = `${Math.round(next)}px`;
+    const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+    if (nearBottom) body.scrollTop = body.scrollHeight;
+  };
+  if (vv) {
+    vv.addEventListener('resize', syncToVisualViewport);
+    vv.addEventListener('scroll', syncToVisualViewport);
+  }
   d.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && panel.classList.contains('is-open') && Workspace.state === 'compact') close();
   });

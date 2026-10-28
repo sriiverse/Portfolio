@@ -132,7 +132,9 @@ export function renderMarkdown(src) {
     out.push(`<p class="ai-p">${inline(buf.join(' '))}</p>`);
   }
   closeList();
-  return out.join('');
+  const html = out.join('');
+  if (!html) return '';
+  return `<div class="ai-prose">${html}</div>`;
 }
 
 /* ============================================================

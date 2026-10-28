@@ -3,13 +3,15 @@
  * follow-ups, and brochure/card duplication.
  * Run: node tests/answer_aspect.test.mjs
  */
-import { buildQuestionFrame, classifyAnswerAspect, suggestFollowupAngles } from '../src/assistant/conversation.js';
+import { readFileSync } from 'node:fs';
+import { buildQuestionFrame, classifyAnswerAspect, enrichBoundContext, suggestFollowupAngles } from '../src/assistant/conversation.js';
 import { resolveEntities, assessConfidence } from '../src/assistant/entities.js';
 import { buildEvidenceSet, retrieveScoped } from '../src/assistant/knowledge.js';
 import { buildResponsePlan } from '../src/assistant/planning.js';
 import { getProvider } from '../src/assistant/providers.js';
 import { classifyReasoningStrategy, synthesizeReasoning } from '../src/assistant/reasoning.js';
 import { pickContextualInvite } from '../src/assistant/adaptive.js';
+import { renderMarkdown } from '../src/assistant/renderer.js';
 
 globalThis.window = globalThis.window || { SRIIVERSE_AI_CONFIG: { provider: 'local' } };
 globalThis.sessionStorage = globalThis.sessionStorage || {
@@ -75,10 +77,13 @@ test('stack question is not swallowed by the project name', () => {
   assert(text && text.length > 40, 'empty stack answer');
   assert(/React/i.test(text) && /Vite/i.test(text), `frontend missing: ${text}`);
   assert(/FastAPI/i.test(text) && /Uvicorn/i.test(text), `backend missing: ${text}`);
+  assert(/Netlify/i.test(text) && /Render/i.test(text), `hosts missing: ${text}`);
   assert(/Gemini/i.test(text) && /Groq/i.test(text), `providers missing: ${text}`);
-  assert(/heuristic|no provider key|no LLM key/i.test(text), 'demo heuristic missing');
-  assert(/WebSocket/i.test(text), 'CLI agent missing');
-  assert(/simulat/i.test(text) || /no database|database driver/i.test(text), 'limitation missing');
+  assert(!/heuristic|no provider key|no LLM key/i.test(text), `heuristic caveat leaked: ${text}`);
+  assert(!/WebSocket/i.test(text), `CLI agent leaked: ${text}`);
+  assert(!/simulat/i.test(text), `simulated execution leaked: ${text}`);
+  assert(!/database driver|no database/i.test(text), `database caveat leaked: ${text}`);
+  assert(!/outdated/i.test(text), `portfolio discrepancy leaked: ${text}`);
   assert(!/^Verified implementation architecture/i.test(text.trim()), 'audit lead');
   assert(!/five-layer/i.test(text), 'portfolio diagram');
   assert(!/I designed the architecture/i.test(text), 'false personal design claim');
@@ -110,7 +115,7 @@ test('how QueryForge was built uses its architecture, not the five-layer diagram
   const text = synthesizeReasoning(r, q, { questionFrame: frame, memory: {} });
   assert(/FastAPI/i.test(text) && /Uvicorn/i.test(text), text);
   assert(/Gemini/i.test(text), text);
-  assert(/not Flask|outdated/i.test(text), 'Flask correction');
+  assert(!/outdated|portfolio wording/i.test(text), 'portfolio discrepancy leaked into an architecture answer');
   assert(!/five-layer/i.test(text), text);
   assert(!/I designed the architecture as a deliberate/i.test(text), text);
   assert(!/PostgreSQL · MongoDB/i.test(text), 'portfolio database layer');
@@ -123,7 +128,8 @@ test('Flask question stays a correction, not a silent miss', () => {
   assert(r.task === 'queryforge_detail', `task ${r.task}`);
   const text = synthesizeReasoning(r, q, { questionFrame: frame, memory: {} });
   assert(/FastAPI/i.test(text), text);
-  assert(/not Flask|outdated|inspected implementation/i.test(text), text);
+  assert(/not Flask/i.test(text), text);
+  assert(!/outdated|portfolio wording/i.test(text), text);
   assert(!/Flask keeps the AI/i.test(text), text);
 });
 
@@ -202,7 +208,8 @@ test('follow-ups change dimension and do not ask for undocumented motives', () =
   assert(!/why I chose|hardest engineering/i.test(joined), joined);
   assert(!/Architecture of QueryForgeAI/i.test(joined), joined);
   assert(!/Tech stack for QueryForgeAI/i.test(joined), joined);
-  assert(/request|external services/i.test(joined), joined);
+  assert(!/What did he use to build/i.test(joined), joined);
+  assert(/SQL generation|external AI providers|live database/i.test(joined), joined);
 
   const invite = pickContextualInvite({
     query: q,
@@ -329,9 +336,13 @@ test('Flask yes/no leads with no and does not dump the stack', () => {
   const text = synthesizeReasoning(r, q, { questionFrame: frame, memory: {} });
   assert(/^No\b/.test(text.trim()), text);
   assert(/FastAPI/i.test(text) && /Uvicorn/i.test(text), text);
-  assert(/not Flask|outdated/i.test(text), text);
-  assert(!/Optional failover: Groq/i.test(text), text);
+  assert(/not Flask/i.test(text), text);
+  assert(!/outdated/i.test(text), text);
+  assert(!/Groq/i.test(text), text);
   assert(!/WebSocket/i.test(text), text);
+  assert(!/database driver/i.test(text), text);
+  assert(!/simulat/i.test(text), text);
+  assert(!/heuristic/i.test(text), text);
   assert(text.length < 500, `still a stack dump (${text.length})`);
 });
 
@@ -372,6 +383,7 @@ test('an explicit architecture comparison keeps the longer detail', () => {
   assert(r.lens === 'architecture', `lens ${r.lens}`);
   const text = synthesizeReasoning(r, q, { questionFrame: frame, memory: {} });
   assert(/FastAPI/i.test(text) && /Flask/i.test(text), text);
+  assert(!/outdated|portfolio wording/i.test(text), text);
   assert(text.length > 700, `architecture detail was shortened (${text.length})`);
 });
 
@@ -423,9 +435,129 @@ test('How is it built stays on the bound QueryForge architecture', () => {
   assert(r.aspect === 'architecture', r.aspect);
   const text = synthesizeReasoning(r, q, { questionFrame: frame, memory });
   assert(/FastAPI/i.test(text) && /Uvicorn/i.test(text), text);
+  assert(!/outdated|portfolio wording/i.test(text), text);
   assert(!/^Verified implementation architecture/i.test(text.trim()), text.slice(0, 80));
   assert(!/five-layer/i.test(text), text);
   assert(!/strongest demo/i.test(text), text);
+});
+
+test('a bound Flask follow-up stays a short no on QueryForge', () => {
+  const q = 'Is it built with Flask?';
+  const memory = boundMemory('queryforge', 'queryforge_detail');
+  const bound = enrichBoundContext(q, { lastProject: 'queryforge', projectIds: ['queryforge'] });
+  assert(/queryforge/i.test(bound.query), bound.query);
+  const frame = buildQuestionFrame(bound.query, { memory, focusProject: 'queryforge' });
+  const r = classifyReasoningStrategy(bound.query, { questionFrame: frame, memory });
+  assert(r.task === 'queryforge_detail', r.task);
+  assert(r.aspect === 'yesno', r.aspect);
+  const text = synthesizeReasoning(r, bound.query, { questionFrame: frame, memory });
+  assert(/^No\b/.test(text.trim()), text);
+  assert(/FastAPI/i.test(text) && /Uvicorn/i.test(text), text);
+  assert(!/Groq|WebSocket|database driver|simulat|outdated/i.test(text), text);
+});
+
+test('complete QueryForge architecture stays detailed', () => {
+  const q = 'Explain the complete architecture of QueryForgeAI.';
+  const frame = buildQuestionFrame(q, {});
+  const r = classifyReasoningStrategy(q, { questionFrame: frame, memory: {} });
+  assert(r.aspect === 'architecture', r.aspect);
+  const text = synthesizeReasoning(r, q, { questionFrame: frame, memory: {} });
+  assert(/FastAPI/i.test(text) && /Uvicorn/i.test(text), text);
+  assert(/Gemini/i.test(text) && /Groq/i.test(text), text);
+  assert(/WebSocket/i.test(text), text);
+  assert(/database driver|no database/i.test(text), text);
+  assert(!/outdated|portfolio wording/i.test(text), text);
+  assert(!/does not execute real EXPLAIN|simulated/i.test(text), text);
+  assert(text.length > 300, `architecture was over-shortened (${text.length})`);
+});
+
+test('Placement Pro built answer stays on Placement facts', () => {
+  const q = 'How is Placement Pro+ built?';
+  const frame = buildQuestionFrame(q, {});
+  const r = classifyReasoningStrategy(q, { questionFrame: frame, memory: {} });
+  assert(r.task === 'placementpro_detail', r.task);
+  const text = synthesizeReasoning(r, q, { questionFrame: frame, memory: {} });
+  assert(/React/i.test(text) && /Flask/i.test(text), text);
+  assert(/SQLAlchemy|SQLite/i.test(text), text);
+  assert(/MiniLM|NetworkX/i.test(text), text);
+  assert(!/generate-sql/i.test(text), text);
+  assert(!/Gemini/i.test(text), text);
+});
+
+function askInContext(raw, memory) {
+  const bound = enrichBoundContext(raw, {
+    lastProject: memory.lastProject,
+    projectIds: memory.lastCommitment?.projectIds || (memory.lastProject ? [memory.lastProject] : []),
+  });
+  const frame = buildQuestionFrame(bound.query, { memory, focusProject: bound.focusProject });
+  const reasoning = classifyReasoningStrategy(bound.query, { questionFrame: frame, memory });
+  const text = synthesizeReasoning(reasoning, bound.query, { questionFrame: frame, memory });
+  return { bound, frame, reasoning, text };
+}
+
+test('a bound architecture contrast keeps Placement Pro+ and compares both backends', () => {
+  const memory = boundMemory('placementpro', 'placementpro_detail');
+  const variants = [
+    'How does its architecture differ from QueryForgeAI?',
+    'How is its architecture different from QueryForgeAI?',
+    'How does Placement Pro+ differ architecturally from QueryForgeAI?',
+    'Compare its architecture with QueryForgeAI.',
+  ];
+  for (const q of variants) {
+    const { bound, frame, reasoning, text } = askInContext(q, memory);
+    assert(bound.focusProject === 'placementpro', `${q} focus ${bound.focusProject}`);
+    assert(/placement pro/i.test(bound.query) && /queryforge/i.test(bound.query), bound.query);
+    assert(frame.questionType === 'Comparison', `${q} type ${frame.questionType}`);
+    assert(reasoning.task === 'cross_project_compare', `${q} task ${reasoning.task}`);
+    assert(reasoning.projectIds?.[0] === 'placementpro', `${q} ids ${reasoning.projectIds}`);
+    assert(reasoning.projectIds.includes('queryforge'), `${q} ids ${reasoning.projectIds}`);
+    assert(/Placement Pro/i.test(text) && /QueryForgeAI/i.test(text), text);
+    assert(/Flask/i.test(text) && /FastAPI/i.test(text), text);
+    assert(/Core technical distinction/i.test(text), text);
+    assert(/skill-gap|placement-preparation|roadmap/i.test(text), text);
+    assert(!/^QueryForgeAI is a SQL\/Mongo query generator[^\n]*$/i.test(text.trim()), text);
+    assert(!/outdated|portfolio wording|WebSocket|database driver|simulat/i.test(text), text);
+  }
+
+  const skill = askInContext('How does its skill-gap analysis work?', memory);
+  assert(skill.bound.focusProject === 'placementpro', skill.bound.focusProject);
+  assert(skill.reasoning.task === 'placementpro_detail', skill.reasoning.task);
+  assert(skill.reasoning.focus === 'pp-skill-gap', skill.reasoning.focus);
+});
+
+test('an explicit portfolio-wording question still reports the Flask discrepancy', () => {
+  const q = 'Why does the portfolio say QueryForgeAI uses Flask?';
+  const frame = buildQuestionFrame(q, {});
+  const r = classifyReasoningStrategy(q, { questionFrame: frame, memory: {} });
+  const text = synthesizeReasoning(r, q, { questionFrame: frame, memory: {} });
+  assert(/FastAPI/i.test(text), text);
+  assert(/outdated|portfolio wording/i.test(text), text);
+});
+
+test('follow-ups after yes/no and Placement architecture stay on the project', () => {
+  const flask = suggestFollowupAngles('Is QueryForgeAI built with Flask?', 'QueryForgeAI');
+  assert(flask?.some((item) => /SQL generation|live database|AI providers/i.test(item)), flask?.join(' | '));
+  assert(!flask?.some((item) => /built with Flask/i.test(item)), flask?.join(' | '));
+
+  const placement = suggestFollowupAngles('How is Placement Pro+ built?', 'Placement Pro+');
+  const joined = (placement || []).join(' | ');
+  assert(/skill-gap/i.test(joined) && /roadmap/i.test(joined), joined);
+  assert(!/generate-sql/i.test(joined), joined);
+
+  const radar = suggestFollowupAngles('How does RepoRadar work?', 'RepoRadar');
+  const radarJoined = (radar || []).join(' | ');
+  assert(/GitHub data|heuristic scoring|generative model/i.test(radarJoined), radarJoined);
+  assert(!/FastAPI|Gemini/i.test(radarJoined), radarJoined);
+});
+
+test('ordinary answers render as one prose block, not a bubble per paragraph', () => {
+  const html = renderMarkdown('Frontend: React.\n\nBackend: FastAPI.\n\nPersistence: SQLAlchemy.');
+  assert(html.startsWith('<div class="ai-prose">'), html);
+  assert((html.match(/class="ai-p"/g) || []).length === 3, html);
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+  assert(!/\.assistant__msg--bot p\s*\{/.test(css), 'unscoped bot paragraph bubble is still present');
+  assert(/\.assistant__msg--bot \.ai-prose\s*\{/.test(css), 'prose bubble missing');
+  assert(/\.assistant__msg--bot > p\s*\{/.test(css), 'welcome bubble missing');
 });
 
 const failed = results.filter((r) => !r.ok);

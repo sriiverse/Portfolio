@@ -30,7 +30,7 @@ import {
   getEngineeringIdentity,
   getIdentityClaimsByFacet,
 } from './identity.js';
-import { classifyAnswerAspect, classifyConversationMode, isBoundFollowUpQuery } from './conversation.js';
+import { classifyAnswerAspect, classifyConversationMode, isBoundFollowUpQuery, isYesNoTechnologyAsk } from './conversation.js';
 import { getProject } from './knowledge.js';
 import {
   isQueryForgeQuery,
@@ -281,7 +281,7 @@ function resolveCrossProjectQuestion(query, ctx = {}) {
   const portfolioWide = /\b(all three|these three|these projects|each project|the three projects|the three systems|which of the three|engineering patterns|patterns repeat)\b/i.test(t)
     || (named.length === 0 && /\bwhich projects?\b/i.test(t));
   const comparison = ctx?.questionFrame?.questionType === 'Comparison'
-    || /\bcompare\b|\bvs\.?\b|\bversus\b|\bdifference between\b/i.test(t);
+    || /\bcompare\b|\bvs\.?\b|\bversus\b|\bdifference between\b|\bdiffer(?:s|ed)?\b|\bdifferent from\b|\barchitecturally\b/i.test(t);
   const followUp = isBoundFollowUpQuery(query)
     || /\b(which one|what model|which of them)\b/i.test(t);
 
@@ -294,6 +294,11 @@ function resolveCrossProjectQuestion(query, ctx = {}) {
     ids = ['queryforge', 'placementpro'];
   } else {
     return null;
+  }
+
+  const remembered = ctx?.memory?.lastProject;
+  if (remembered && ids.includes(remembered)) {
+    ids = [remembered, ...ids.filter((id) => id !== remembered)];
   }
 
   const aspect = classifyAnswerAspect(t);
@@ -339,6 +344,9 @@ const DETAIL_TASK = {
  * Returns null when no single project is named, or the aspect is not one of those four.
  */
 function aspectForBoundFocus(query, focus) {
+  // A deictic "Is it built with Flask?" has no project name, so the shared
+  // classifier leaves it unresolved. The bound project is already known here.
+  if (isYesNoTechnologyAsk(query)) return 'yesno';
   const aspect = classifyAnswerAspect(query);
   if (aspect) return aspect;
   if (/architecture$/.test(String(focus || '')) && /\b(built|architect|designed|structured|stack)\b/i.test(String(query || ''))) {
@@ -371,15 +379,37 @@ function facetSentences(text) {
 
 const STACK_SENTENCE = /frontend|backend|react|fastapi|flask|next\.?js|gemini|groq|vite|uvicorn|octokit|websocket|database|sqlite|postgres|minilm|networkx|sqlalchemy/i;
 
-function shapeArchitectureAspect(facet, aspect) {
+function shapeArchitectureAspect(facet, aspect, query) {
   const sentences = facetSentences(facet?.text);
   if (!sentences.length) return null;
-  if (aspect === 'architecture') return sentences.join('\n\n');
+  if (aspect === 'architecture') {
+    const kept = sentences.filter((s) => asksPortfolioDiscrepancy(query) || !isPortfolioDiscrepancySentence(s));
+    return (kept.length ? kept : sentences).join('\n\n');
+  }
   if (aspect === 'stack') {
-    const kept = sentences.filter((s) => STACK_SENTENCE.test(s));
-    return (kept.length ? kept : sentences).join(' ');
+    const stackSentences = sentences.filter((s) => STACK_SENTENCE.test(s));
+    const kept = stackSentences.filter((s) => !isUnaskedStackCaveat(s, query));
+    return (kept.length ? kept : stackSentences).join(' ');
   }
   return null;
+}
+
+function isPortfolioDiscrepancySentence(sentence) {
+  return /portfolio wording|outdated relative to the code/i.test(sentence);
+}
+
+function isUnaskedStackCaveat(sentence, query) {
+  const q = String(query || '');
+  if (isPortfolioDiscrepancySentence(sentence) && !asksPortfolioDiscrepancy(q)) {
+    return true;
+  }
+  if (/no database drivers|migrations appear in the inspected/i.test(sentence) && !/database|driver|migration|limitation|live db|explain/i.test(q)) {
+    return true;
+  }
+  if (/websocket/i.test(sentence) && !/websocket|cli|local agent|pro agent/i.test(q)) {
+    return true;
+  }
+  return false;
 }
 
 function speakProjectMotivation(projectId) {
@@ -420,12 +450,12 @@ function speakApiContrast(ids) {
   ].join('\n\n');
 }
 
-function speakStackContrast(ids) {
+function speakStackContrast(ids, query) {
   const blocks = ids.map((id) => {
     const project = CROSS_PROJECT_CATALOG.find((p) => p.id === id);
     const facet = project?.facets.find((f) => f.id === ASPECT_FOCUS[id].stack);
-    let shaped = shapeArchitectureAspect(facet, 'stack');
-    if (id === 'queryforge') shaped = supplementQueryForge('stack', shaped);
+    let shaped = shapeArchitectureAspect(facet, 'stack', query);
+    if (id === 'queryforge') shaped = supplementQueryForge('stack', shaped, query);
     return shaped ? `**${project.name}.** ${shaped}` : '';
   }).filter(Boolean);
   return blocks.join('\n\n');
@@ -467,6 +497,54 @@ function technologyClause(sentence, preferred) {
   return (hit || sentence || '').replace(/\.$/, '');
 }
 
+function isTechDenial(sentence, tech) {
+  if (!new RegExp(`\\b${tech.source}\\b`, 'i').test(sentence)) return false;
+  return /\b(not|no|without|isn't|is not|outdated)\b/i.test(sentence);
+}
+
+function asksPortfolioDiscrepancy(query) {
+  return /portfolio|wording|says flask|said flask|documentation|outdated|why.{0,40}flask/i.test(String(query || ''));
+}
+
+function omitUnaskedPortfolioDiscrepancy(text, query) {
+  if (asksPortfolioDiscrepancy(query)) return text;
+  return String(text || '')
+    .replace(/\s*It is not Flask in the inspected implementation — portfolio wording that says Flask for QueryForgeAI is outdated relative to the code\./gi, '')
+    .trim();
+}
+
+function cleanClause(text) {
+  return String(text || '')
+    .replace(/^Verified implementation architecture(?:\s*\([^)]*\))?:\s*/i, '')
+    .replace(/\.$/, '')
+    .trim();
+}
+
+/**
+ * Pull the frontend and backend clauses out of architecture sentences.
+ * A clause that only exists to deny the asked technology is skipped.
+ */
+function collectStackBits(sentences, tech) {
+  const deniedRe = new RegExp(`\\b${tech.source}\\b`, 'i');
+  const bits = [];
+  const push = (bit) => {
+    const cleaned = cleanClause(bit);
+    if (!cleaned || bits.includes(cleaned)) return;
+    if (deniedRe.test(cleaned) && /\b(not|no|without)\b/i.test(cleaned)) return;
+    if (!/\b(fastapi|uvicorn|flask|next\.?js|react|vite|frontend|backend)\b/i.test(cleaned)) return;
+    bits.push(cleaned);
+  };
+  for (const sentence of sentences) {
+    for (const part of String(sentence).split(/;/)) {
+      const labeled = part.split(/(?=(?:Frontend|Backend):)/i);
+      for (const bit of labeled) push(bit);
+    }
+  }
+  const frontend = bits.find((bit) => /frontend/i.test(bit) && !/fastapi|uvicorn/i.test(bit)) || '';
+  const backend = bits.find((bit) => (/fastapi|uvicorn|\bflask\b|^backend:/i.test(bit) && !deniedRe.test(bit))) || '';
+  return { frontend, backend };
+}
+
 /**
  * Direct yes/no for a named technology. Uses the architecture facet's own
  * sentences, and stops after the clause that answers the question.
@@ -480,17 +558,24 @@ function speakYesNoTechnology(projectId, query, facet) {
   }
   const re = new RegExp(`\\b${tech.source}\\b`, 'i');
   const hits = sentences.filter((sentence) => re.test(sentence));
-  const denial = hits.find((sentence) => /\b(not|no|without|isn't|is not|outdated)\b/i.test(sentence));
-  const affirm = hits.find((sentence) => sentence !== denial);
-  if (denial && !affirm) {
-    const used = sentences.find((sentence) => sentence !== denial && /\b(backend|frontend|fastapi|uvicorn|next\.?js|flask)\b/i.test(sentence));
-    const usedBit = used
-      ? ` The inspected implementation uses ${technologyClause(used, /fastapi|uvicorn|next\.?js|flask|backend/i)}.`
-      : '';
-    return `No. ${denial}${usedBit}`;
+  const denied = hits.some((sentence) => isTechDenial(sentence, tech));
+  const supported = hits.some((sentence) => !isTechDenial(sentence, tech));
+  if (denied && !supported) {
+    const { frontend, backend } = collectStackBits(sentences, tech);
+    const primary = backend || frontend;
+    let answer = primary
+      ? `No. ${name} uses ${primary}, not ${tech.label}.`
+      : `No. ${name} does not use ${tech.label}.`;
+    if (frontend && backend && frontend !== backend) answer += ` ${frontend}.`;
+    if (asksPortfolioDiscrepancy(query)) {
+      const line = sentences.find((sentence) => /outdated|portfolio wording/i.test(sentence));
+      if (line) answer += ` ${line}`;
+    }
+    return answer.replace(/\s+/g, ' ').trim();
   }
-  if (affirm) {
-    return `Yes. The inspected ${name} implementation uses ${technologyClause(affirm, re)}.`;
+  if (supported) {
+    const affirm = hits.find((sentence) => !isTechDenial(sentence, tech));
+    return `Yes. ${name} uses ${cleanClause(technologyClause(affirm, re))}.`;
   }
   return `The inspected records for ${name} do not establish whether it uses ${tech.label}.`;
 }
@@ -552,8 +637,8 @@ function speakFacetForAspect(task, facet, classification, query) {
     return facet.text;
   }
   if ((aspect === 'stack' || aspect === 'architecture') && facet) {
-    let shaped = shapeArchitectureAspect(facet, aspect);
-    if (projectId === 'queryforge') shaped = supplementQueryForge(aspect, shaped);
+    let shaped = shapeArchitectureAspect(facet, aspect, query);
+    if (projectId === 'queryforge') shaped = supplementQueryForge(aspect, shaped, query);
     const name = projectId ? getProject(projectId)?.name : '';
     if (shaped && name && !new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(shaped)) {
       shaped = `${name}: ${shaped}`;
@@ -564,8 +649,12 @@ function speakFacetForAspect(task, facet, classification, query) {
 }
 
 /** Facts that live on a sibling QueryForge facet, not in the architecture paragraph. */
-function supplementQueryForge(aspect, shaped) {
+function supplementQueryForge(aspect, shaped, query) {
   if (!shaped || (aspect !== 'stack' && aspect !== 'architecture')) return shaped;
+  // Heuristic fallback and simulated CLI execution answer limitation questions.
+  // Stack and architecture summaries do not import them on their own.
+  const wantsSiblingCaveat = /heuristic|simulat|websocket|cli agent|pro agent|no (?:llm |provider |api )?key|fallback|limitation/i.test(String(query || ''));
+  if (!wantsSiblingCaveat) return shaped;
   const extra = [];
   if (!/heuristic/i.test(shaped)) {
     const model = QUERYFORGE_FACETS.find((f) => f.id === 'qf-ai-model');
@@ -580,13 +669,23 @@ function supplementQueryForge(aspect, shaped) {
   return extra.length ? `${shaped} ${extra.join(' ')}` : shaped;
 }
 
-function facetParagraphs(ids, lens) {
+function isConciseArchitectureContrast(query) {
+  const t = String(query || '');
+  if (/\bcompare the architecture of\b/i.test(t)) return false;
+  return /\barchitect/i.test(t) && /\b(compare|differ(?:s|ed)?|different from|architecturally)\b/i.test(t);
+}
+
+function facetParagraphs(ids, lens, query) {
   const map = CROSS_LENS_FACETS[lens] || CROSS_LENS_FACETS.differentiate;
   const blocks = [];
   for (const id of ids) {
     const project = CROSS_PROJECT_CATALOG.find((p) => p.id === id);
     if (!project) continue;
-    const texts = (map[id] || []).map((fid) => project.facets.find((f) => f.id === fid)?.text).filter(Boolean);
+    const texts = (map[id] || [])
+      .map((fid) => project.facets.find((f) => f.id === fid)?.text)
+      .filter(Boolean)
+      .map((text) => omitUnaskedPortfolioDiscrepancy(text, query))
+      .filter(Boolean);
     if (texts.length) blocks.push(`**${project.name}.** ${texts.join(' ')}`);
   }
   return blocks;
@@ -603,22 +702,26 @@ function speakCrossProject(query, classification) {
     const spoken = speakProductDifference(ids);
     if (spoken) return spoken;
   }
+  if (isConciseArchitectureContrast(query)) {
+    const spoken = speakProductDifference(ids);
+    if (spoken) return spoken;
+  }
   if (lens === 'motivation') {
     const blocks = ids.map((id) => speakProjectMotivation(id)).filter(Boolean);
     if (blocks.length) return blocks.join('\n\n');
   }
   if (lens === 'stack') {
-    const spoken = speakStackContrast(ids);
+    const spoken = speakStackContrast(ids, query);
     if (spoken) return spoken;
   }
   if (lens === 'intent') {
-    const limits = facetParagraphs(ids, 'intent');
+    const limits = facetParagraphs(ids, 'intent', query);
     const lead = 'Improvement priorities are not documented as CODE-PROVEN design intent, so I will not invent what to build next. Documented limitations are not a chosen roadmap.';
     return [lead, ...limits].join('\n\n');
   }
   const prior = classification?.priorLens;
   const evidenceLens = lens === 'why' ? (prior && prior !== 'why' ? prior : 'model') : lens;
-  const blocks = facetParagraphs(ids, evidenceLens);
+  const blocks = facetParagraphs(ids, evidenceLens, query);
   const lead = [];
   const t = String(query || '');
   if (lens === 'premise' || /python backend|share one api|share an api/i.test(t)) {

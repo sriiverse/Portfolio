@@ -56,7 +56,7 @@ const GREETING_RE = /^(hi+|hey+|hello+|yo|sup|howdy|greetings|good\s+(morning|af
 
 const IDENTITY_RE = /\b(who are you|what are you|introduce yourself|what is sriiverse\s*ai|what is sriiverseai|what can you do|what do you do|are you sudhanshu|are you (sriiverse\s*ai|sriiverseai)|your role (inside|in)|what (is|are) your role)\b/i;
 
-const COMPARISON_RE = /\bcompare\b|\bvs\.?\b|\bversus\b|\bdifference between\b/i;
+const COMPARISON_RE = /\bcompare\b|\bvs\.?\b|\bversus\b|\bdifference between\b|\bdiffer(?:s|ed)?\b|\bdifferent from\b|\barchitecturally\b/i;
 
 const OPINION_RE = /\b(prefer|would you (use|choose|recommend|pick)|your opinion|which\s+\w+\s+(would you|do you)\s+(use|choose|recommend|pick)|what.*(is|'s)?\s*(better|best))\b/i;
 
@@ -226,7 +226,19 @@ export function isBoundFollowUpQuery(query) {
   if (/\bso why did\b|\bwhy (did|does|would).{0,40}\bkeep\b/i.test(t)) return true;
   if (/\bwhat was the hardest\b|\bhardest part\b/i.test(t)) return true;
   if (/\bwhy flask\b|\bkeep flask\b|\bkept flask\b/i.test(t) && !/queryforge|reporadar|placement/i.test(t)) return true;
+  // "Is it built with Flask?" / "Does it use FastAPI?" — the project name
+  // was stripped above, so this only matches a deictic technology question.
+  if (/^(?:is|does|did|was|are|do) (?:it|that|this|he)\b/i.test(t) && /\b(?:built with|use|uses|using)\b/i.test(t)) return true;
+  if (/^how does (?:its |the )?(?:skill-?gap|roadmap)\b/i.test(t)) return true;
   return false;
+}
+
+/** Closed "is/does … use/built with …" question about a known technology. */
+export function isYesNoTechnologyAsk(query) {
+  const t = String(query || '').toLowerCase().trim();
+  return /^(?:is|does|did|was|are|do)\b/.test(t)
+    && /\b(?:built with|use|uses|using)\b/.test(t)
+    && /\b(?:flask|fastapi|uvicorn|react|vite|next\.?js|gemini|groq)\b/.test(t);
 }
 
 /**
@@ -256,11 +268,9 @@ export function classifyAnswerAspect(query) {
   if (motivation && !designChoice) return 'motivation';
 
   // Closed technology questions get a yes/no before the full stack paragraph.
-  const yesNoTech = /^(?:is|does|did|was|are|do)\b/i.test(t)
-    && /\b(?:built with|use|uses|using)\b/i.test(t)
-    && /\b(?:flask|fastapi|uvicorn|react|vite|next\.?js|gemini|groq)\b/i.test(t)
-    && namedProject;
-  if (yesNoTech) return 'yesno';
+  // A bare "Is it built with Flask?" stays unresolved here until the bound
+  // project is known; the named form is decided immediately.
+  if (isYesNoTechnologyAsk(t) && namedProject) return 'yesno';
 
   const stack = /\b(tech(?:nology)? stack|(?:the )?stack (?:for|of)|what technologies|what tools|technologies (?:does|did)|what did (?:he|you|sudhanshu) use|used to build|use to build|built with)\b/i.test(t)
     || /\bwhat\b.{0,48}\b(?:use|used|using)\b.{0,32}\bbuild\b/i.test(t);
@@ -285,7 +295,7 @@ export function classifyAnswerAspect(query) {
   const assistantSelf = /\bhow (?:does|do) (?:you|the assistant|this assistant|this chat)\b/i.test(t);
   if (productFlow && namedProject && !assistantSelf && !analyzesTargetArchitecture) return 'flow';
 
-  if (/\b(compare|vs\.?|versus|difference between)\b/i.test(t)) return 'comparison';
+  if (/\b(compare|vs\.?|versus|difference between|differ(?:s|ed)?|different from|architecturally)\b/i.test(t)) return 'comparison';
 
   const explicitWalkthrough = /\b(walk (me )?through|deep dive|in detail|open (the )?project|full (write-?up|breakdown))\b/i.test(t);
   const flowWalkthrough = /\b(flow|pipeline|generat|from user input|under the hood|schema_def)\b/i.test(t);
@@ -298,33 +308,122 @@ export function classifyAnswerAspect(query) {
  * Next-step questions that change dimension. Null when this turn has no
  * aspect (engineering-detail answers keep their existing empty chip set).
  */
+function projectKeyFromName(name) {
+  const n = String(name || '').toLowerCase();
+  if (/queryforge/.test(n)) return 'queryforge';
+  if (/placement/.test(n)) return 'placementpro';
+  if (/reporadar|repo\s*radar/.test(n)) return 'reporadar';
+  return null;
+}
+
+const FOLLOWUP_BY_PROJECT = {
+  queryforge: {
+    stack: [
+      'How does the SQL generation flow work?',
+      'Which external AI providers does QueryForgeAI use?',
+      'Does QueryForgeAI execute SQL against a live database?',
+    ],
+    architecture: [
+      'How does the SQL generation flow work?',
+      'Which external AI providers does QueryForgeAI use?',
+      'Does QueryForgeAI execute SQL against a live database?',
+    ],
+    yesno: [
+      'How does the SQL generation flow work?',
+      'Which external AI providers does QueryForgeAI use?',
+      'Does QueryForgeAI execute SQL against a live database?',
+    ],
+    flow: [
+      'What did he use to build QueryForgeAI?',
+      'Which external AI providers does QueryForgeAI use?',
+      'Does QueryForgeAI execute SQL against a live database?',
+    ],
+    api: [
+      'How does the SQL generation flow work?',
+      'Does QueryForgeAI execute SQL against a live database?',
+    ],
+    motivation: [
+      'What did he use to build QueryForgeAI?',
+      'How does QueryForgeAI work?',
+    ],
+  },
+  placementpro: {
+    stack: [
+      'How does its skill-gap analysis work?',
+      'How does the roadmap generator work?',
+      'How does its architecture differ from QueryForgeAI?',
+    ],
+    architecture: [
+      'How does its skill-gap analysis work?',
+      'How does the roadmap generator work?',
+      'How does its architecture differ from QueryForgeAI?',
+    ],
+    yesno: [
+      'How does its skill-gap analysis work?',
+      'How does the roadmap generator work?',
+    ],
+    flow: [
+      'How does its skill-gap analysis work?',
+      'How does the roadmap generator work?',
+      'How is Placement Pro+ built?',
+    ],
+    motivation: [
+      'How does its skill-gap analysis work?',
+      'How is Placement Pro+ built?',
+    ],
+    api: [
+      'How does its skill-gap analysis work?',
+      'How does the roadmap generator work?',
+    ],
+  },
+  reporadar: {
+    stack: [
+      'What GitHub data does RepoRadar use?',
+      'How does its heuristic scoring work?',
+      'Does RepoRadar use a generative model?',
+    ],
+    architecture: [
+      'What GitHub data does RepoRadar use?',
+      'How does its heuristic scoring work?',
+      'Does RepoRadar use a generative model?',
+    ],
+    yesno: [
+      'What GitHub data does RepoRadar use?',
+      'How does its heuristic scoring work?',
+    ],
+    flow: [
+      'What GitHub data does RepoRadar use?',
+      'How does its heuristic scoring work?',
+      'Does RepoRadar use a generative model?',
+    ],
+    motivation: [
+      'How does RepoRadar work?',
+      'What GitHub data does RepoRadar use?',
+    ],
+    api: [
+      'What GitHub data does RepoRadar use?',
+      'How does its heuristic scoring work?',
+    ],
+  },
+};
+
+function withoutRepeatedQuestion(query, items) {
+  const q = String(query || '').toLowerCase().replace(/[?!.]/g, '').replace(/\s+/g, ' ').trim();
+  return items.filter((item) => {
+    const s = item.toLowerCase().replace(/[?!.]/g, '').replace(/\s+/g, ' ').trim();
+    if (!s || s === q) return false;
+    if (q.length > 12 && (q.includes(s) || s.includes(q))) return false;
+    return true;
+  }).slice(0, 3);
+}
+
 export function suggestFollowupAngles(query, projectName) {
-  const aspect = classifyAnswerAspect(query);
-  const name = projectName || 'this project';
-  if (aspect === 'stack') {
-    return [
-      `How does a request move through ${name}?`,
-      `Which external services does ${name} call?`,
-    ];
-  }
-  if (aspect === 'architecture') {
-    return [
-      `What problem does ${name} solve?`,
-      `Which routes does ${name} expose?`,
-    ];
-  }
-  if (aspect === 'motivation') {
-    return [
-      `What did he use to build ${name}?`,
-      `How is ${name} structured?`,
-    ];
-  }
-  if (aspect === 'api') {
-    return [
-      `How does a request move through ${name}?`,
-      `What does the free path not do?`,
-    ];
-  }
+  const namedAspect = classifyAnswerAspect(query);
+  const aspect = namedAspect || (isYesNoTechnologyAsk(query) ? 'yesno' : null);
+  const id = projectKeyFromName(projectName) || projectKeyFromName(query);
+  const table = id ? FOLLOWUP_BY_PROJECT[id] : null;
+  const picked = table?.[aspect];
+  if (picked?.length) return withoutRepeatedQuestion(query, picked);
   return null;
 }
 
@@ -346,8 +445,8 @@ export function findExplicitProjects(query) {
  */
 export function explicitlyJoinsPriorComparison(query) {
   const t = String(query || '');
-  const compares = /\b(compare|compared|comparison|vs\.?|versus|difference between)\b/i.test(t);
-  const deictic = /\b(that|this|those|them|their|it|the same|the previous|that approach)\b/i.test(t);
+  const compares = /\b(compare|compared|comparison|vs\.?|versus|difference between|differ(?:s|ed)?|different from|architecturally)\b/i.test(t);
+  const deictic = /\b(that|this|those|them|their|its|it|the same|the previous|that approach)\b/i.test(t);
   return compares && deictic;
 }
 
@@ -375,6 +474,8 @@ export function classifyContextAttachment(query, { lastProject = null, projectId
   const bound = (Array.isArray(projectIds) ? projectIds : []).filter(Boolean);
   const joins = explicitlyJoinsPriorComparison(query);
   if (joins && (bound.length >= 2 || lastProject)) return 'expand';
+  const compares = /\b(compare|compared|comparison|vs\.?|versus|difference between|differ(?:s|ed)?|different from|architecturally)\b/i.test(String(query || ''));
+  if (compares && lastProject && explicit.length >= 2 && explicit.some((project) => project.id === lastProject)) return 'expand';
   if (explicit.length) return 'explicit';
   if (!isContextualFollowUp(query)) return 'none';
   if (bound.length >= 2) return 'follow-set';
@@ -408,7 +509,8 @@ export function enrichBoundContext(query, {
   if (attachment === 'expand') {
     const base = bound.length >= 2 ? bound : [lastProject].filter(Boolean);
     const enriched = append(base);
-    return { query: enriched, focusProject: null, enriched: enriched !== query };
+    const focusProject = bound.length >= 2 ? null : (lastProject || null);
+    return { query: enriched, focusProject, enriched: enriched !== query };
   }
   if (attachment === 'follow-set') {
     const enriched = append(bound);
