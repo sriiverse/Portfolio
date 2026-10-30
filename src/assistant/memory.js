@@ -191,7 +191,9 @@ class Memory {
    */
   add(role, text, entities = {}) {
     this.turns.push({ role, text, ts: Date.now(), entities });
-    if (entities.project) this.lastProject = entities.project;
+    const compared = Array.isArray(this.lastCommitment?.projectIds)
+      && this.lastCommitment.projectIds.length >= 2;
+    if (entities.project && !compared) this.lastProject = entities.project;
 
     // Update visitor profile on user turns — skipped for turns whose text
     // isn't the visitor's own words (see entities.skipProfileIngest above).

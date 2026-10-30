@@ -1,3 +1,5 @@
+import { cueMatches } from './queryforgeKnowledge.js';
+
 /**
  * placementproKnowledge.js — CODE-PROVEN Placement Pro+ engineering facets.
  *
@@ -33,7 +35,9 @@ export const PLACEMENTPRO_FACETS = [
     confidence: 'documented',
     source: 'code-audit:Placement-Pro+live',
     cues: [
-      'what is placement pro',
+      // Anchored so "What is Placement Pro's <specific property>?" cannot
+      // inherit the product overview.
+      '^what is placement pro\\+?\\s*[?.!]*$',
       'purpose',
       'what does placement pro',
       'placement\\.os',
@@ -424,6 +428,7 @@ export const PLACEMENTPRO_FACETS = [
       'render.yaml',
       'gunicorn',
       'vite_api_url',
+      'hosted',
     ],
     text: [
       'Frontend is deployed on Netlify (placement-pro.netlify.app). Backend packaging includes Gunicorn; render.yaml describes a Render service; frontend env can point at a Hugging Face Spaces API fallback.',
@@ -529,16 +534,15 @@ export function matchPlacementProFacet(query) {
   const depthRank = { unknown: 0, overview: 1, judgment: 2, architecture: 3, mechanics: 4 };
   let best = null;
   let bestScore = 0;
+  // "Placement Pro's Kubernetes…" is a specific property, not the overview.
+  const specificProperty = /\bplacement\s*pro\+?['’]s\s+(?!purpose\b)\S+/i.test(t);
 
   for (const facet of PLACEMENTPRO_FACETS) {
     if (facet.confidence === 'unknown' && !scoped) continue;
+    if (facet.depth === 'overview' && specificProperty) continue;
     let hits = 0;
     for (const cue of facet.cues) {
-      try {
-        if (new RegExp(cue, 'i').test(t)) hits += 1;
-      } catch {
-        if (t.includes(String(cue).toLowerCase())) hits += 1;
-      }
+      if (cueMatches(cue, t)) hits += 1;
     }
     if (!hits) continue;
     const score = hits * 10 + (depthRank[facet.depth] || 0);

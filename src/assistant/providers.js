@@ -29,7 +29,7 @@ import {
   DECISION_FIRST_STRATEGIES,
   isEngineeringDetailQuery,
 } from './reasoning.js';
-import { classifyAnswerAspect, wantsDirectAnswerOnly } from './conversation.js';
+import { classifyAnswerAspect, findExplicitProjects, wantsDirectAnswerOnly } from './conversation.js';
 import { isQueryForgeQuery, matchQueryForgeFacet } from './queryforgeKnowledge.js';
 import { isPlacementProQuery, matchPlacementProFacet } from './placementproKnowledge.js';
 import { isRepoRadarQuery, matchRepoRadarFacet } from './reporadarKnowledge.js';
@@ -1017,11 +1017,29 @@ const LocalProvider = {
   /**
    * V4.5 Mod 2 — persist active project + mode so follow-ups stay bound.
    */
-  _bindConversationState(ctx, classification, spoken) {
+  _bindConversationState(ctx, classification, _spoken) {
     const memory = ctx?.memory;
     if (!memory) return;
     const task = classification?.task;
     if (!task || task === 'compare_passthrough') return;
+    // A clarification lists project names as options. That is not a selection.
+    if (task === 'why_clarify') return;
+    if (task === 'context_clarify') {
+      if (typeof memory.bindConversationState === 'function') {
+        memory.bindConversationState({
+          projectId: null,
+          mode: task,
+          commitment: {
+            projectId: null,
+            name: null,
+            task,
+            pendingProject: true,
+            aspect: classification?.aspect || null,
+          },
+        });
+      }
+      return;
+    }
 
     const projectIds = Array.isArray(classification?.projectIds)
       ? classification.projectIds.filter(Boolean)
@@ -1044,28 +1062,26 @@ const LocalProvider = {
       return;
     }
 
-    const text = String(spoken || '');
-    const first = text.split(/\n\n/)[0] || text;
-    const catalog = [
-      { id: 'queryforge', name: 'QueryForgeAI', re: /QueryForgeAI|\bqueryforge\b/i },
-      { id: 'reporadar', name: 'RepoRadarAI', re: /RepoRadarAI|\breporadar\b/i },
-      { id: 'placementpro', name: 'Placement Pro+', re: /Placement Pro\+|\bplacement\s*pro\b/i },
-    ];
-    let projectId = null;
-    for (const p of catalog) {
-      if (p.re.test(first)) { projectId = p.id; break; }
-    }
-    if (!projectId) {
-      for (const p of catalog) {
-        if (p.re.test(text)) { projectId = p.id; break; }
-      }
-    }
+    const visitorQuery = ctx?.questionFrame?.rawQuery || ctx?.query || '';
+    const visitorIds = findExplicitProjects(visitorQuery).map((project) => project.id);
+    const pending = memory.lastCommitment?.task === 'context_clarify'
+      && memory.lastCommitment?.pendingProject === true;
+    // An unrelated answer can name every project. That is not a visitor selection,
+    // and it must not retire a clarification the visitor has not resolved.
+    if (pending && visitorIds.length === 0) return;
+
+    const names = {
+      queryforge: 'QueryForgeAI',
+      reporadar: 'RepoRadarAI',
+      placementpro: 'Placement Pro+',
+    };
+    let projectId = visitorIds.length === 1 ? visitorIds[0] : null;
     if (!projectId) {
       const fromTask = /^(queryforge|placementpro|reporadar)_/.exec(task || '');
       if (fromTask) projectId = fromTask[1];
     }
     if (!projectId) projectId = memory.lastProject || null;
-    const name = catalog.find((p) => p.id === projectId)?.name || projectId;
+    const name = names[projectId] || projectId;
     const commitment = { projectId, name, task };
     if (typeof memory.bindConversationState === 'function') {
       memory.bindConversationState({ projectId, mode: task, commitment });

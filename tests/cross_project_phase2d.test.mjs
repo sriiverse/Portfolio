@@ -57,9 +57,12 @@ function enrichQuery(query, memory) {
   const multi = Array.isArray(memory?.lastCommitment?.projectIds)
     ? memory.lastCommitment.projectIds.filter(Boolean)
     : [];
+  const pendingClarification = memory?.lastCommitment?.task === 'context_clarify'
+    && memory?.lastCommitment?.pendingProject === true;
   return enrichBoundContext(query, {
     lastProject: memory?.lastProject || null,
     projectIds: multi,
+    pendingClarification,
   });
 }
 

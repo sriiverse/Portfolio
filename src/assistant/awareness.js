@@ -13,6 +13,10 @@
    ============================================================ */
 const SECTION_IDS = ['hero', 'about', 'projects', 'stack', 'architecture', 'journey', 'stats', 'contact'];
 
+// A page project qualifies only while at least this fraction of its card
+// intersects the viewport. Matches the project observer threshold below.
+const PROJECT_VISIBILITY_THRESHOLD = 0.4;
+
 /* ============================================================
    AWARENESS SINGLETON
    ============================================================ */
@@ -27,6 +31,11 @@ class WebsiteAwareness {
 
     this._sectionEnterTime = {};       // when we entered the current section
     this._observers = [];
+    this._projectObserver = null;
+    // Latest visibility for every observed page card. A callback only
+    // reports targets that crossed the threshold, so the map has to retain
+    // the others.
+    this._projectVisibility = new Map();
 
     this._init();
   }
@@ -77,20 +86,49 @@ class WebsiteAwareness {
   }
 
   _attachProjectObserver() {
-    const projOpts = { threshold: 0.4 };
-    const projObs = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const id = entry.target.dataset.projectId;
-          if (id) this.currentProject = id;
-        }
-      });
-    }, projOpts);
+    if (this._projectObserver) return;
+    const projObs = new IntersectionObserver(
+      (entries) => this._onProjectEntries(entries),
+      { threshold: PROJECT_VISIBILITY_THRESHOLD },
+    );
 
-    document.querySelectorAll('[data-project-id]').forEach((el) => {
+    // Page cards only. Chat cards also use data-project-id and must not
+    // compete with the section the visitor is reading.
+    document.querySelectorAll('#projectMount [data-project-id]').forEach((el, order) => {
+      const id = el.dataset.projectId;
+      if (!id) return;
+      this._projectVisibility.set(el, { id, ratio: 0, intersecting: false, order });
       projObs.observe(el);
     });
+    this._projectObserver = projObs;
     this._observers.push(projObs);
+    this._recomputeCurrentProject();
+  }
+
+  _onProjectEntries(entries) {
+    for (const entry of entries) {
+      const state = this._projectVisibility.get(entry.target);
+      if (!state) continue;
+      state.ratio = Number(entry.intersectionRatio) || 0;
+      state.intersecting = entry.isIntersecting === true;
+    }
+    this._recomputeCurrentProject();
+  }
+
+  /**
+   * Pick the qualifying page card with the highest intersection ratio.
+   * A card qualifies only while it intersects and its ratio is at least
+   * PROJECT_VISIBILITY_THRESHOLD. Equal ratios keep the earlier card in
+   * #projectMount (QueryForgeAI, then Placement Pro+, then RepoRadar).
+   * No qualifying card clears currentProject.
+   */
+  _recomputeCurrentProject() {
+    const qualifying = [];
+    for (const state of this._projectVisibility.values()) {
+      if (state.intersecting && state.ratio >= PROJECT_VISIBILITY_THRESHOLD) qualifying.push(state);
+    }
+    qualifying.sort((a, b) => b.ratio - a.ratio || a.order - b.order);
+    this.currentProject = qualifying[0]?.id || null;
   }
 
   /* --------------------------------------------------------

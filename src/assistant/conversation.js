@@ -222,6 +222,8 @@ export function isBoundFollowUpQuery(query) {
   if (/^why (that |this )?(architecture|stack|design|choice)\??$/i.test(t)) return true;
   if (/^what (database|db|stack|frontend|backend) does it use\??$/i.test(t)) return true;
   if (/^(?:and )?(?:what about )?(?:its |the )?backend\??$/i.test(t)) return true;
+  if (/^(?:and )?(?:what about )?(?:its |the )?frontend\??$/i.test(t)) return true;
+  if (/^(?:and )?(?:what about )?(?:its |the )?(?:database|db|persistence)\??$/i.test(t)) return true;
   if (/^which technology powers (?:its |the )?backend\??$/i.test(t)) return true;
   if (/^tell me about its server[- ]side\??$/i.test(t)) return true;
   if (/^what would you (improve|change|rebuild)( next)?\??$/i.test(t)) return true;
@@ -263,6 +265,32 @@ export function isBackendAspectQuery(query) {
   return /\b(?:backends?|server[- ]side)\b/.test(t);
 }
 
+/**
+ * A question about one project's database or persistence.
+ * Comparisons and schema-origin questions stay on their own routes.
+ */
+export function isDatabaseAspectQuery(query) {
+  const t = String(query || '').toLowerCase();
+  if (/\b(compare|vs\.?|versus|difference between|differ(?:s|ed)?|different from|architecturally)\b/.test(t)) return false;
+  if (/\barchitect/.test(t)) return false;
+  if (/\bschema\b/.test(t)) return false;
+  return /\b(?:databases?|persistence|data store)\b/.test(t);
+}
+
+/**
+ * A short question about one project's frontend.
+ * A comparison, or a question that also asks about the backend, stays on its own route.
+ */
+export function isFrontendAspectQuery(query) {
+  const t = String(query || '').toLowerCase();
+  if (/\b(compare|vs\.?|versus|difference between|differ(?:s|ed)?|different from|architecturally)\b/.test(t)) return false;
+  if (/\barchitect/.test(t)) return false;
+  if (/\b(backend or frontend|frontend or backend)\b/.test(t)) return false;
+  if (/\bstronger\b.{0,24}\bfrontend\b/.test(t)) return false;
+  if (/\bdemonstrat\w* frontend|best.*(for )?frontend|most.*frontend/.test(t)) return false;
+  return /\bfrontends?\b/.test(t);
+}
+
 /** Closed "is/does … use/built with …" question about a known technology. */
 export function isYesNoTechnologyAsk(query) {
   const t = String(query || '').toLowerCase().trim();
@@ -276,7 +304,7 @@ export function isYesNoTechnologyAsk(query) {
  * One classifier, shared by question type, reasoning, retrieval-adjacent
  * brochure gating, and follow-up suggestions. Returns null when a more
  * specific engineering facet (data flow, model, design-intent) should win.
- * @returns {'stack'|'motivation'|'architecture'|'api'|'comparison'|'walkthrough'|'flow'|'yesno'|null}
+ * @returns {'stack'|'motivation'|'architecture'|'api'|'comparison'|'walkthrough'|'flow'|'yesno'|'database'|null}
  */
 export function classifyAnswerAspect(query) {
   const t = String(query || '').toLowerCase().trim();
@@ -305,6 +333,8 @@ export function classifyAnswerAspect(query) {
   if (isYesNoTechnologyAsk(t) && namedProject && !repoRadarModel) return 'yesno';
 
   if (isBackendAspectQuery(t)) return 'stack';
+  if (isDatabaseAspectQuery(t)) return 'database';
+  if (isFrontendAspectQuery(t)) return 'stack';
   if (asksBackendDepth(t) && namedProject) return 'architecture';
 
   const stack = /\b(tech(?:nology)? stack|(?:the )?stack (?:for|of)|what technologies|what tools|technologies (?:does|did)|what did (?:he|you|sudhanshu) use|used to build|use to build|built with)\b/i.test(t)
@@ -466,7 +496,10 @@ function mentionsProject(query, project) {
   const q = String(query || '').toLowerCase();
   const name = String(project?.name || '').toLowerCase();
   const id = String(project?.id || '').toLowerCase();
-  return (id && q.includes(id)) || (name && q.includes(name));
+  if ((id && q.includes(id)) || (name && q.includes(name))) return true;
+  // The display name is "Placement Pro+". "Placement Pro" is the same project.
+  if (id === 'placementpro' && /\bplacement\s*pro\b/.test(q)) return true;
+  return false;
 }
 
 /** Projects named in this question. An explicit name outranks an older comparison. */
@@ -526,6 +559,7 @@ export function enrichBoundContext(query, {
   lastProject = null,
   projectIds = [],
   awarenessProject = null,
+  pendingClarification = false,
 } = {}) {
   const projects = getAllProjects();
   const byId = (id) => projects.find((project) => project.id === id) || null;
@@ -556,7 +590,9 @@ export function enrichBoundContext(query, {
     return { query: enriched, focusProject: lastProject, enriched: enriched !== query };
   }
   const pronoun = /\b(it|that|this|its|second|third|first|one|both|other|next)\b/i.test(query);
-  if (!explicit.length && awarenessProject && pronoun) {
+  // The viewport card is not a visitor selection. An unresolved project
+  // clarification stays unresolved until the visitor names a project.
+  if (!pendingClarification && !explicit.length && awarenessProject && pronoun) {
     const focus = lastProject || awarenessProject;
     const enriched = append([focus]);
     return { query: enriched, focusProject: focus, enriched: enriched !== query };
@@ -682,7 +718,12 @@ function resolveExplanation(qLower, ctx) {
 
   // No explicit signal either way — use conversational context, exactly as
   // requested ("use conversational context before retrieval").
-  const contextProject = ctx.focusProject || ctx.memory?.lastProject || ctx.awareness?.currentProject;
+  // A pending project choice has no selected project. The viewport card
+  // must not fill that gap.
+  const pendingProject = ctx.memory?.lastCommitment?.task === 'context_clarify'
+    && ctx.memory?.lastCommitment?.pendingProject === true;
+  const viewportProject = pendingProject ? null : (ctx.awareness?.currentProject || null);
+  const contextProject = ctx.focusProject || ctx.memory?.lastProject || viewportProject;
   if (contextProject) {
     return { move: 'explanation', scope: 'project', projectId: contextProject, entities: [contextProject], category: null };
   }

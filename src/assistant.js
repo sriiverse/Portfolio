@@ -191,10 +191,14 @@ function resolveContext(query, intent) {
 
   // Explicit project names win. A comparison set is appended only for a
   // real follow-up, or when the question deictically asks to compare.
+  // A pending clarification blocks the viewport project from filling "it".
+  const pendingClarification = memory.lastCommitment?.task === 'context_clarify'
+    && memory.lastCommitment?.pendingProject === true;
   return enrichBoundContext(query, {
     lastProject: memory.lastProject,
     projectIds: boundProjectIds(),
     awarenessProject: awareness.currentProject,
+    pendingClarification,
   });
 }
 

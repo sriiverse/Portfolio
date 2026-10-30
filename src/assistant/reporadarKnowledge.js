@@ -1,3 +1,5 @@
+import { cueMatches } from './queryforgeKnowledge.js';
+
 /**
  * reporadarKnowledge.js — CODE-PROVEN RepoRadarAI engineering facets.
  *
@@ -34,7 +36,9 @@ export const REPORADAR_FACETS = [
     confidence: 'documented',
     source: 'code-audit:sriiverse/RepoRadar@c22530bf',
     cues: [
-      'what is reporadar',
+      // Anchored so "What is RepoRadar's <specific property>?" cannot
+      // inherit the product overview.
+      '^what is reporadar(?:ai)?\\s*[?.!]*$',
       'purpose',
       'what does reporadar',
       'github repository intelligence',
@@ -312,7 +316,7 @@ export const REPORADAR_FACETS = [
     cues: [
       'security',
       'authentication',
-      'private repositor',
+      'private repositor(?:y|ies)',
       'ssrf',
       'github token',
       'GITHUB_TOKEN',
@@ -483,7 +487,7 @@ export function matchRepoRadarFacet(query) {
     if (ai) return ai;
   }
 
-  if (scoped && /clone|zip|source code|source files|file tree|\bast\b|readme fetch/i.test(t)) {
+  if (scoped && /\bclone\b|\bzip\b|source code|source files|file tree|\bast\b|readme fetch/i.test(t)) {
     const ing = REPORADAR_FACETS.find((f) => f.id === 'rr-ingestion');
     if (ing) return ing;
   }
@@ -521,16 +525,15 @@ export function matchRepoRadarFacet(query) {
   const depthRank = { unknown: 0, overview: 1, judgment: 2, architecture: 3, mechanics: 4 };
   let best = null;
   let bestScore = 0;
+  // "RepoRadar's Kubernetes…" is a specific property, not the overview.
+  const specificProperty = /\b(?:reporadar(?:ai)?|repo\s*radar)['’]s\s+(?!purpose\b)\S+/i.test(t);
 
   for (const facet of REPORADAR_FACETS) {
     if (facet.confidence === 'unknown' && !scoped) continue;
+    if (facet.depth === 'overview' && specificProperty) continue;
     let hits = 0;
     for (const cue of facet.cues) {
-      try {
-        if (new RegExp(cue, 'i').test(t)) hits += 1;
-      } catch {
-        if (t.includes(String(cue).toLowerCase())) hits += 1;
-      }
+      if (cueMatches(cue, t)) hits += 1;
     }
     if (!hits) continue;
     const score = hits * 10 + (depthRank[facet.depth] || 0);

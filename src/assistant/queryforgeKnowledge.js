@@ -34,7 +34,9 @@ export const QUERYFORGE_FACETS = [
     confidence: 'documented',
     source: 'code-audit:AI-SQL-Optimizer+live',
     cues: [
-      'what is queryforge',
+      // Anchored so "What is QueryForgeAI's <specific property>?" cannot
+      // inherit the product overview.
+      '^what is queryforge(?:ai)?\\s*[?.!]*$',
       'purpose',
       'what does queryforge do',
       'sql generator',
@@ -296,7 +298,8 @@ export const QUERYFORGE_FACETS = [
       'deploy',
       'deployment',
       'netlify',
-      'render',
+      // The host Render, not the verb "render the results page".
+      '(?:^|[^a-z0-9])render(?=$|[^a-z0-9])(?!\\s+(?:the|a|an|its|this|that|results?|pages?|markdown|output)\\b)',
       'hosted',
       'production host',
     ],
@@ -370,6 +373,39 @@ export function hasQueryForgeSignal(query) {
 }
 
 /**
+ * A short cue can be the right word for a documented question and the wrong
+ * word for a different property: "syntax" is validation, "syntax highlighting"
+ * is not. Skip only that compound. Leave the cue itself in place.
+ */
+function cueNamesADifferentProperty(cue, text) {
+  const source = String(cue || '').toLowerCase();
+  if (source === 'syntax' && /\bsyntax highlighting\b/i.test(text)) return true;
+  if (source === 'payload' && /\bpayload encryption\b/i.test(text)) return true;
+  if (source === 'websocket' && /\bwebsocket backpressure\b/i.test(text)) return true;
+  return false;
+}
+
+/**
+ * Plain cues match a whole word or phrase, plus a simple inflection
+ * (plural, -ed, or -ing). A cue must not match inside a longer unrelated word:
+ * "validation" does not match "invalidation", and "generator" does not match
+ * "regenerator". Cues that are already regular expressions are used as written.
+ */
+export function cueMatches(cue, text) {
+  const source = String(cue || '');
+  if (!source) return false;
+  if (/[\\^$.*+?()[\]{}|]/.test(source)) {
+    try {
+      return new RegExp(source, 'i').test(text);
+    } catch {
+      return text.includes(source.toLowerCase());
+    }
+  }
+  const escaped = source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:s|ed|ing)?(?=$|[^a-z0-9])`, 'i').test(text);
+}
+
+/**
  * Match a QueryForge facet for a visitor query.
  * Prefers more cue hits, then deeper facets.
  * Returns null for generic portfolio questions (Why Flask?, Why React?) that
@@ -405,16 +441,17 @@ export function matchQueryForgeFacet(query) {
   const depthRank = { unknown: 0, overview: 1, judgment: 2, architecture: 3, mechanics: 4 };
   let best = null;
   let bestScore = 0;
+  // A possessive property ("QueryForgeAI's Kubernetes…") is a specific
+  // question. Overview cues must not answer it.
+  const specificProperty = /\bqueryforge(?:ai)?['’]s\s+(?!purpose\b)\S+/i.test(t);
 
   for (const facet of QUERYFORGE_FACETS) {
     if (facet.confidence === 'unknown' && !scoped) continue;
+    if (facet.depth === 'overview' && specificProperty) continue;
     let hits = 0;
     for (const cue of facet.cues) {
-      try {
-        if (new RegExp(cue, 'i').test(t)) hits += 1;
-      } catch {
-        if (t.includes(String(cue).toLowerCase())) hits += 1;
-      }
+      if (cueNamesADifferentProperty(cue, t)) continue;
+      if (cueMatches(cue, t)) hits += 1;
     }
     if (!hits) continue;
     const score = hits * 10 + (depthRank[facet.depth] || 0);

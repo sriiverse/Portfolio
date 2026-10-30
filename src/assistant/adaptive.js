@@ -115,11 +115,8 @@ export function inferSessionTopic(ctx = {}) {
     if (hit) return { kind: 'project', ...hit };
   }
 
-  const recent = typeof memory?.recentTurns === 'function'
-    ? memory.recentTurns(6)
-    : (memory?.turns || []).slice(-6);
   const blob = [
-    ...recent.map((t) => t.text || ''),
+    ...visitorTurns(memory, 6).map((t) => t.text || ''),
     q,
   ].join('\n');
 
@@ -132,30 +129,36 @@ export function inferSessionTopic(ctx = {}) {
   return null;
 }
 
+/** Project names spoken only by the assistant are not a visitor selection. */
+function visitorTurns(memory, limit) {
+  const recent = typeof memory?.recentTurns === 'function'
+    ? memory.recentTurns(limit)
+    : (memory?.turns || []);
+  return recent.filter((turn) => turn?.role !== 'assistant').slice(-limit);
+}
+
 function buildContinuityLead(ctx, topic) {
   if (!topic) return null;
-  const memory = ctx.memory;
-  const turns = typeof memory?.recentTurns === 'function'
-    ? memory.recentTurns(4)
-    : (memory?.turns || []).slice(-4);
-  // Need a prior turn — first question has no continuity.
-  if (!turns || turns.length < 2) return null;
+  const visitors = visitorTurns(ctx.memory, 4);
+  // Need a prior visitor turn. The assistant's own clarification is not one.
+  if (visitors.length < 2) return null;
 
-  const q = String(ctx?.questionFrame?.rawQuery || ctx?.query || '');
+  const q = String(visitors[visitors.length - 1]?.text || '');
 
   // V4.6.1 — continuity only on genuine follow-ups. False continuity is worse than none.
   if (!isBoundFollowUpQuery(q)) return null;
   if (/^(hi|hello|hey)\b/i.test(q.trim())) return null;
 
+  const memory = ctx.memory;
   const boundId = memory?.lastCommitment?.projectId || memory?.lastProject;
   if (boundId && topic.kind === 'project' && topic.id !== boundId) {
     return null;
   }
 
-  const priorMentionsTopic = turns.slice(0, -1).some((t) => topic.re.test(t.text || ''));
+  const priorMentionsTopic = visitors.slice(0, -1).some((t) => topic.re.test(t.text || ''));
   if (!priorMentionsTopic) return null;
 
-  // Current question already names the topic — skip redundant lead.
+  // The visitor already named the topic in this turn — skip a redundant lead.
   if (topic.re.test(q)) return null;
 
   if (topic.kind === 'project') {

@@ -30,7 +30,7 @@ import {
   getEngineeringIdentity,
   getIdentityClaimsByFacet,
 } from './identity.js';
-import { classifyAnswerAspect, classifyConversationMode, isBackendAspectQuery, isBoundFollowUpQuery, isYesNoTechnologyAsk } from './conversation.js';
+import { classifyAnswerAspect, classifyConversationMode, isBackendAspectQuery, isBoundFollowUpQuery, isDatabaseAspectQuery, isFrontendAspectQuery, isYesNoTechnologyAsk } from './conversation.js';
 import { getProject } from './knowledge.js';
 import {
   isQueryForgeQuery,
@@ -327,9 +327,9 @@ function resolveCrossProjectQuestion(query, ctx = {}) {
 }
 
 const ASPECT_FOCUS = {
-  queryforge: { stack: 'qf-architecture', architecture: 'qf-architecture', motivation: 'qf-purpose', api: 'qf-api', flow: 'qf-dataflow-overview', yesno: 'qf-architecture', switch: 'qf-purpose' },
-  placementpro: { stack: 'pp-architecture', architecture: 'pp-architecture', motivation: 'pp-purpose', api: 'pp-api', flow: 'pp-dataflow-dashboard', yesno: 'pp-architecture', switch: 'pp-purpose' },
-  reporadar: { stack: 'rr-architecture', architecture: 'rr-architecture', motivation: 'rr-purpose', api: 'rr-api', flow: 'rr-user-flow', yesno: 'rr-architecture', switch: 'rr-purpose' },
+  queryforge: { stack: 'qf-architecture', architecture: 'qf-architecture', motivation: 'qf-purpose', api: 'qf-api', flow: 'qf-dataflow-overview', yesno: 'qf-architecture', switch: 'qf-purpose', database: 'qf-limitations' },
+  placementpro: { stack: 'pp-architecture', architecture: 'pp-architecture', motivation: 'pp-purpose', api: 'pp-api', flow: 'pp-dataflow-dashboard', yesno: 'pp-architecture', switch: 'pp-purpose', database: 'pp-database' },
+  reporadar: { stack: 'rr-architecture', architecture: 'rr-architecture', motivation: 'rr-purpose', api: 'rr-api', flow: 'rr-user-flow', yesno: 'rr-architecture', switch: 'rr-purpose', database: 'rr-data-flow' },
 };
 
 const DETAIL_TASK = {
@@ -337,6 +337,39 @@ const DETAIL_TASK = {
   placementpro: 'placementpro_detail',
   reporadar: 'reporadar_detail',
 };
+
+function pendingProjectCommitment(ctx) {
+  const commitment = ctx?.memory?.lastCommitment;
+  if (commitment?.task !== 'context_clarify' || commitment.pendingProject !== true) return null;
+  return commitment;
+}
+
+/** A turn that only names a project, with no new question of its own. */
+function bareProjectChoice(query) {
+  const ids = namedCrossProjectIds(query);
+  if (ids.length !== 1) return null;
+  const stripped = String(query || '').toLowerCase()
+    .replace(/queryforgeai|queryforge|reporadarai|repo\s*radar|reporadar|placement\s*pro\+?|placementpro/g, ' ')
+    .replace(/\b(i|mean|the|please|one|project|its|it|a|an)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, '');
+  return stripped ? null : ids[0];
+}
+
+function routePendingProjectChoice(query, ctx) {
+  const pending = pendingProjectCommitment(ctx);
+  const id = bareProjectChoice(query);
+  if (!pending || !id || !pending.aspect) return null;
+  const focusKey = pending.aspect === 'database' ? 'database' : 'stack';
+  const focus = ASPECT_FOCUS[id]?.[focusKey];
+  const task = DETAIL_TASK[id];
+  if (!focus || !task) return null;
+  const aspect = pending.aspect === 'database'
+    ? 'database'
+    : pending.aspect === 'backend'
+      ? 'backend'
+      : 'stack';
+  return { strategy: 'Summarize', task, focus, aspect };
+}
 
 /**
  * Single-project stack, motivation, architecture, and API questions.
@@ -391,6 +424,10 @@ function shapeArchitectureAspect(facet, aspect, query) {
       const backend = backendClauseFromSentences(sentences);
       if (backend) return backend;
     }
+    if (isFrontendAspectQuery(query)) {
+      const frontend = frontendClauseFromSentences(sentences);
+      if (frontend) return frontend;
+    }
     const stackSentences = sentences.filter((s) => STACK_SENTENCE.test(s));
     const kept = stackSentences.filter((s) => !isUnaskedStackCaveat(s, query));
     return (kept.length ? kept : stackSentences).join(' ');
@@ -403,6 +440,16 @@ function backendClauseFromSentences(sentences) {
     if (isPortfolioDiscrepancySentence(sentence)) continue;
     const parts = String(sentence).split(/;/).map((part) => part.trim()).filter(Boolean);
     const hit = parts.find((part) => /\bbackend\b|\bfastapi\b|\buvicorn\b|\bflask\b|no separate python/i.test(part));
+    if (hit) return cleanClause(hit);
+  }
+  return '';
+}
+
+function frontendClauseFromSentences(sentences) {
+  for (const sentence of sentences) {
+    if (isPortfolioDiscrepancySentence(sentence)) continue;
+    const parts = String(sentence).split(/;/).map((part) => part.trim()).filter(Boolean);
+    const hit = parts.find((part) => /\bfrontend\b/i.test(part) && !/\bfastapi\b|\buvicorn\b/i.test(part));
     if (hit) return cleanClause(hit);
   }
   return '';
@@ -650,6 +697,16 @@ function speakFacetForAspect(task, facet, classification, query) {
     }
     return facet.text;
   }
+  if (aspect === 'backend' && facet) {
+    const clause = backendClauseFromSentences(facetSentences(facet.text));
+    if (clause) {
+      const name = projectId ? getProject(projectId)?.name : '';
+      if (name && !new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(clause)) {
+        return `${name}: ${clause}`;
+      }
+      return clause;
+    }
+  }
   if ((aspect === 'stack' || aspect === 'architecture') && facet) {
     let shaped = shapeArchitectureAspect(facet, aspect, query);
     if (projectId === 'queryforge') shaped = supplementQueryForge(aspect, shaped, query);
@@ -865,6 +922,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     // QueryForgeAI: stay on CODE-PROVEN facets — never generic five-layer arch_why
     // (that spine still names Flask and would contradict the inspected FastAPI backend).
     if (qfBound) {
+      if (isDatabaseAspectQuery(t)) {
+        return { strategy: 'Summarize', task: 'queryforge_detail', focus: 'qf-limitations', aspect: 'database' };
+      }
       if (isBackendAspectQuery(t)) {
         return { strategy: 'Summarize', task: 'queryforge_detail', focus: 'qf-architecture', aspect: 'stack' };
       }
@@ -897,6 +957,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     }
 
     if (ppBound) {
+      if (isDatabaseAspectQuery(t)) {
+        return { strategy: 'Summarize', task: 'placementpro_detail', focus: 'pp-database', aspect: 'database' };
+      }
       if (isBackendAspectQuery(t)) {
         return { strategy: 'Summarize', task: 'placementpro_detail', focus: 'pp-architecture', aspect: 'stack' };
       }
@@ -933,6 +996,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     }
 
     if (rrBound) {
+      if (isDatabaseAspectQuery(t)) {
+        return { strategy: 'Summarize', task: 'reporadar_detail', focus: 'rr-data-flow', aspect: 'database' };
+      }
       if (isBackendAspectQuery(t)) {
         return { strategy: 'Summarize', task: 'reporadar_detail', focus: 'rr-architecture', aspect: 'stack' };
       }
@@ -1131,6 +1197,11 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     if (aspectRoute) return aspectRoute;
   }
 
+  {
+    const pendingChoice = routePendingProjectChoice(t, ctx);
+    if (pendingChoice) return pendingChoice;
+  }
+
   // QueryForge CODE-PROVEN facets / explicit unknowns — before generic why_* only when
   // the query is QueryForge-scoped (or a QF-unique engineering cue).
   {
@@ -1213,8 +1284,8 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Summarize', task: 'reporadar_detail', focus: 'rr-ai-model', secondary: 'rr-ingestion' };
   }
 
-  // Engineering-detail without a QueryForge facet (or for other projects).
-  if (isEngineeringDetailQuery(t)) {
+  // Engineering-detail without a facet, or a specific property the records do not cover.
+  if (isEngineeringDetailQuery(t) || isSpecificUndocumentedProjectAsk(t) || isUnsupportedTechnologyAsk(t)) {
     return { strategy: 'Summarize', task: 'undocumented_detail' };
   }
 
@@ -1275,6 +1346,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     const switched = namedCrossProjectIds(t);
     if (switched.length === 1) {
       const id = switched[0];
+      if (isDatabaseAspectQuery(t) && ASPECT_FOCUS[id].database) {
+        return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].database, aspect: 'database' };
+      }
       return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].switch, aspect: 'switch' };
     }
   }
@@ -1296,6 +1370,12 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (flowIds.length === 1 && (qType === 'ProjectExplanation' || qType === 'ArchitectureExplanation')) {
     const id = flowIds[0];
     return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].switch, aspect: 'switch' };
+  }
+
+  // A project-dependent question with no active project cannot be answered.
+  if (!boundId && namedCrossProjectIds(t).length === 0 && (isBackendAspectQuery(t) || isDatabaseAspectQuery(t) || isFrontendAspectQuery(t))) {
+    const aspect = isDatabaseAspectQuery(t) ? 'database' : isBackendAspectQuery(t) ? 'backend' : 'frontend';
+    return { strategy: 'Summarize', task: 'context_clarify', aspect };
   }
 
   return { strategy: 'Describe', task: null };
@@ -1340,7 +1420,33 @@ export function isEngineeringDetailQuery(query) {
     || /\b(source code|file ingest|git clone)\b/i.test(t)
     || /\bhow is .{0,60} calculated\b/i.test(t)
     || /\bwhat does .{0,40}fetch\b/i.test(t)
+    || (/\bhandle\b/i.test(t) && /queryforge|reporadar|placement/i.test(t))
+    || /\brender(?:s|ed|ing)?\s+(?:the|a|an)\b/i.test(t)
   );
+}
+
+/**
+ * "What is QueryForgeAI's <specific property>?" names one project and a
+ * property the facet records did not match. It is not a product overview.
+ */
+function isSpecificUndocumentedProjectAsk(query) {
+  const t = String(query || '').toLowerCase().trim();
+  if (!t || namedCrossProjectIds(t).length !== 1) return false;
+  if (isGenuineProjectOverviewQuery(t)) return false;
+  const project = String.raw`(?:queryforgeai|queryforge|reporadarai|reporadar|repo\s*radar|placement\s*pro\+?)`;
+  return new RegExp(String.raw`\b${project}['’]s\s+\S{2,}`, 'i').test(t);
+}
+
+/**
+ * "Does QueryForgeAI use Kubernetes?" names a technology the records do not
+ * cover. Documented yes/no technologies are classified earlier.
+ */
+function isUnsupportedTechnologyAsk(query) {
+  const t = String(query || '').toLowerCase().trim();
+  if (!t || namedCrossProjectIds(t).length !== 1) return false;
+  if (isYesNoTechnologyAsk(t)) return false;
+  return /^(?:is|does|did|was|are|do)\b/.test(t)
+    && /\b(?:built with|use|uses|using)\b/.test(t);
 }
 
 /**
@@ -1355,7 +1461,7 @@ export function isGenuineProjectOverviewQuery(query) {
     return false; // brochure/doc mode — leave to Describe/null → card path
   }
   const project = String.raw`(?:queryforgeai|queryforge|reporadarai|reporadar|placement\s*pro\+?)`;
-  if (new RegExp(String.raw`\b(?:tell me about|what is|what's)\s+${project}\b`, 'i').test(t)) return true;
+  if (new RegExp(String.raw`\b(?:tell me about|what is|what's)\s+${project}\s*[?.!]*$`, 'i').test(t)) return true;
   if (new RegExp(String.raw`^(?:explain|describe)\s+${project}\b`, 'i').test(t)) return true;
   if (new RegExp(String.raw`\b(?:explain|describe)\s+${project}\b`, 'i').test(t) && t.length < 72) return true;
   return false;
@@ -2137,6 +2243,9 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
       'Name the project, or say whether you mean why it exists, why the architecture is shaped that way, or why a technology was chosen.',
       'I will only use a reason the project records actually establish.',
     ].join(' ');
+  }
+  if (task === 'context_clarify') {
+    return 'Which project do you mean? QueryForgeAI, Placement Pro+, or RepoRadar?';
   }
 
   const graph = getEngineeringGraph();
