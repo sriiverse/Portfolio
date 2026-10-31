@@ -80,6 +80,69 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function compactToken(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * A name-form alias is the technology's own name, a spelling variant, a short
+ * abbreviation, or a numeronym such as k8s. A different English word is not a
+ * name form, and a short fragment such as "sql" inside "postgresql" is not one
+ * either. JD matching does not use this function.
+ */
+function isNameFormAlias(canonical, alias) {
+  const technology = compactToken(canonical);
+  const form = compactToken(alias);
+  if (!technology || !form) return false;
+  if (technology === form) return true;
+  // "js" and "ts" are listed abbreviations. They are not a trailing fragment
+  // of "javascript" or "typescript", and they are shorter than a concept
+  // fragment such as "sql".
+  if (form.length <= 2 && !/\s/.test(String(alias || ''))) return true;
+  if (form.length >= 2 && (technology.startsWith(form) || form.startsWith(technology))) return true;
+  if (form.length <= 2 && technology.endsWith(form)) return true;
+  const numeronym = form.match(/^([a-z])(\d+)([a-z])$/);
+  if (numeronym
+    && technology.startsWith(numeronym[1])
+    && technology.endsWith(numeronym[3])
+    && technology.slice(1, -1).length === Number(numeronym[2])) {
+    return true;
+  }
+  let shared = 0;
+  while (shared < technology.length && shared < form.length && technology[shared] === form[shared]) shared += 1;
+  if (!/\s/.test(String(alias || '')) && shared >= 4 && shared >= Math.min(form.length, technology.length) * 0.5) {
+    return true;
+  }
+  if (/\s/.test(String(alias || ''))) {
+    const initials = String(alias).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((word) => word[0]).join('');
+    if (initials && (technology === initials || technology === `${initials}s` || initials === technology.replace(/s$/, ''))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function conceptStem(alias) {
+  const words = String(alias || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (words.length !== 1) return '';
+  const stem = words[0].replace(/(?:ization|s)$/, '');
+  return stem.length >= 6 && stem !== words[0] ? stem : '';
+}
+
+function aliasAppears(normalizedText, alias) {
+  if (containsAlias(normalizedText, alias)) return true;
+  const stem = conceptStem(alias);
+  if (!stem) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(stem)}`, 'i').test(normalizedText);
+}
+
+function conceptLabel(normalizedText, alias) {
+  if (containsAlias(normalizedText, alias)) return alias;
+  const stem = conceptStem(alias);
+  if (stem && new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(stem)}`, 'i').test(normalizedText)) return stem;
+  return alias;
+}
+
 /** Whole-word-ish substring match, tolerant of symbols in aliases (e.g. "ci/cd", "node.js"). */
 function containsAlias(normalizedText, alias) {
   const re = new RegExp(`(^|[^a-z0-9])${escapeRegExp(alias.toLowerCase())}([^a-z0-9]|$)`, 'i');
@@ -106,9 +169,81 @@ export function matchTaxonomyEntities(text, { normalized = false } = {}) {
   return found;
 }
 
+/**
+ * The same taxonomy hits as matchTaxonomyEntities, plus the wording that
+ * triggered each one. A descriptive alias stays a keyword. It does not
+ * become a name-form of the canonical technology. JD retrieval still uses
+ * matchTaxonomyEntities().
+ */
+export function matchTaxonomyAliasHits(text, { normalized = false } = {}) {
+  const normalizedText = normalized ? text : normalize(text);
+  const found = [];
+  for (const entry of SKILLS_TAXONOMY) {
+    const aliases = entry.aliases.filter((alias) => containsAlias(normalizedText, alias));
+    if (!aliases.length) continue;
+    const named = aliases.find((alias) => isNameFormAlias(entry.canonical, alias));
+    const descriptive = aliases.filter((alias) => !isNameFormAlias(entry.canonical, alias));
+    found.push({
+      canonical: entry.canonical,
+      alias: named || descriptive[0] || aliases[0],
+      nameForm: Boolean(named),
+      descriptiveAliases: descriptive,
+    });
+  }
+  return found;
+}
+
 /** Every SKILLS_TAXONOMY canonical name actually present in STACK (i.e. owned). */
 function ownedTechNames() {
   return new Set(getStack().map((s) => s.name));
+}
+
+/**
+ * Taxonomy names for an answer. A concept alias such as "caching" does not
+ * become Redis unless the technology's own name is also present.
+ * JD matching keeps using matchTaxonomyEntities().
+ */
+export function matchAnswerTechNames(text, { normalized = false } = {}) {
+  const normalizedText = normalized ? text : normalize(text);
+  const found = [];
+  for (const entry of SKILLS_TAXONOMY) {
+    const aliasHit = answerAliasHit(entry, normalizedText);
+    if (aliasHit && !found.includes(entry.canonical)) found.push(entry.canonical);
+  }
+  return found;
+}
+
+function answerAliasHit(entry, normalizedText) {
+  return entry.aliases.find((alias) => (
+    isNameFormAlias(entry.canonical, alias) && containsAlias(normalizedText, alias)
+  )) || null;
+}
+
+/**
+ * A descriptive alias names a broad concept, such as "containers" or
+ * "version control". It does not select the canonical technology.
+ * An explicit name-form in the same question wins and is omitted here.
+ */
+export function matchDescriptiveAliases(text, { normalized = false } = {}) {
+  const normalizedText = normalized ? text : normalize(text);
+  const found = [];
+  for (const entry of SKILLS_TAXONOMY) {
+    const named = entry.aliases.some((alias) => (
+      isNameFormAlias(entry.canonical, alias) && containsAlias(normalizedText, alias)
+    ));
+    if (named) continue;
+    const descriptives = entry.aliases.filter((alias) => (
+      !isNameFormAlias(entry.canonical, alias) && aliasAppears(normalizedText, alias)
+    ));
+    const descriptive = descriptives.find((alias) => containsAlias(normalizedText, alias)) || descriptives[0];
+    if (!descriptive || found.some((item) => item.canonical === entry.canonical)) continue;
+    found.push({
+      alias: descriptive,
+      label: conceptLabel(normalizedText, descriptive),
+      canonical: entry.canonical,
+    });
+  }
+  return found;
 }
 
 /** Tech entities: SKILLS_TAXONOMY alias matches, classified owned vs. gap. */
@@ -116,7 +251,7 @@ function resolveTechEntities(normalizedText) {
   const owned = ownedTechNames();
   const found = [];
   for (const entry of SKILLS_TAXONOMY) {
-    const aliasHit = entry.aliases.find((alias) => containsAlias(normalizedText, alias));
+    const aliasHit = answerAliasHit(entry, normalizedText);
     if (!aliasHit) continue;
     found.push({
       type: 'tech',

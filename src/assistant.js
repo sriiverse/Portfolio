@@ -47,6 +47,7 @@ import awareness from './assistant/awareness.js';
 import { createStream } from './assistant/streaming.js';
 import { decideTool, runTool, runProactiveTool, setKnowledgeRef } from './assistant/tools.js';
 import { getProvider } from './assistant/providers.js';
+import { isIncidentalProjectMention } from './assistant/reasoning.js';
 import { looksLikeJobDescription } from './assistant/jdmatch.js';
 import { interview } from './assistant/interview.js';
 import { buildQuestionFrame, enrichBoundContext, suggestFollowupAngles, wantsDirectAnswerOnly } from './assistant/conversation.js';
@@ -802,7 +803,10 @@ export function initAssistant() {
     }
 
     // Record assistant turn
-    const resolvedProject = focusProject || response.payload?.project?.id || response.payload?.projectA?.id || null;
+    // A passing mention is not the project this turn selected.
+    const resolvedProject = isIncidentalProjectMention(userText)
+      ? null
+      : (focusProject || response.payload?.project?.id || response.payload?.projectA?.id || null);
     memory.add('assistant', response.text, { project: resolvedProject });
 
     // --- 12. WORKSPACE STATE ---

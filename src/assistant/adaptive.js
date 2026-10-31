@@ -298,17 +298,18 @@ export function pickContextualInvite(ctx = {}, move = 'Answer') {
   if (task === 'undocumented_detail' || task === 'honest_unknown'
     || task === 'queryforge_detail' || task === 'queryforge_unknown'
     || task === 'placementpro_detail' || task === 'placementpro_unknown'
-    || task === 'reporadar_detail' || task === 'reporadar_unknown') return null;
+    || task === 'reporadar_detail' || task === 'reporadar_unknown'
+      || task === 'portfolio_history' || task === 'stack_membership' || task === 'concept_record' || task === 'concept_alias' || task === 'tech_mention' || task === 'project_stack_evidence' || task === 'project_alias_record' || task === 'eval_rest_apis' || task === 'why_postgres' || task === 'database_strength' || task === 'backend_vs_frontend' || task === 'startup_fit' || task === 'backend_team_fit' || task === 'product_oriented' || task === 'best_role' || task === 'production_ready' || task === 'scalable_backend' || task === 'strongest_decision' || task === 'demo_frontend' || task === 'demo_backend' || task === 'why_hire' || task === 'demo_ai' || task === 'engineer_type' || task === 'keep_two' || task === 'best_engineering' || task === 'justify_best_project') return null;
   if (wantsDirectAnswerOnly(q)) return null;
 
   if (task === 'why_flask' || /\bwhy flask\b/i.test(q)) {
-    return 'Want to compare it with FastAPI, or see how that decision shaped the architecture?';
+    return 'Want to compare the recorded Flask and FastAPI configurations, or look at the architecture?';
   }
   if (task === 'why_fastapi' || /\bwhy fastapi\b/i.test(q)) {
-    return 'Want the Flask contrast, or QueryForgeAI’s FastAPI + Uvicorn cloud path?';
+    return 'Want the recorded Flask configuration beside it, or QueryForgeAI’s FastAPI + Uvicorn cloud path?';
   }
   if (task === 'why_react' || /\bwhy react\b/i.test(q)) {
-    return 'Want the trade-offs vs other UI stacks, or how React shows up on a specific project?';
+    return 'Want the recorded React configuration, or how React shows up on a specific project?';
   }
   if (task === 'why_postgres' || /postgres/i.test(q) && /\bwhy\b/i.test(q)) {
     return 'Want how that shows up in QueryForge, or the Mongo trade-off?';
@@ -540,7 +541,27 @@ function applyAnswerShapeBudget(text, ctx = {}) {
   // CODE-PROVEN project facets must not be sentence-reassembled (decimals /
   // dotted identifiers like 0.60 and nx.shortest_path).
   const preserveCodeProven = /^(placementpro|queryforge|reporadar)_(detail|unknown)$/.test(task)
-    || task === 'cross_project_compare';
+    || task === 'cross_project_compare'
+    || task === 'portfolio_history'
+    || task === 'stack_membership'
+    || task === 'concept_record'
+    || task === 'concept_alias'
+    || task === 'project_stack_evidence'
+    || task === 'eval_rest_apis'
+    || task === 'why_postgres'
+    || task === 'database_strength'
+    || task === 'project_alias_record'
+    || task === 'backend_vs_frontend'
+    || task === 'startup_fit'
+    || task === 'backend_team_fit'
+    || task === 'product_oriented'
+    || task === 'best_role'
+    || task === 'production_ready'
+    || task === 'scalable_backend'
+    || task === 'strongest_decision'
+    || task === 'why_flask'
+    || task === 'why_fastapi'
+    || task === 'why_react';
   const wantsExpand = wantsDocs
     || /\b(more detail|go deeper|elaborate|expand|full (explanation|write-?up)|everything about)\b/i.test(q)
     || isBoundFollowUpQuery(q);

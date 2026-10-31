@@ -200,17 +200,42 @@ export function classifyConversationMode(query) {
  * V4.5 Mod 2 — follow-up shapes that must inherit the prior commitment.
  * Expanded so short "How?" / "Why?" / improve probes stay on the bound project.
  */
-export function isBoundFollowUpQuery(query) {
-  const raw = String(query || '').trim();
-  // Strip trailing project names so enrichment doesn't break ^...$ patterns
-  const t = raw
-    .replace(/\b(queryforgeai|queryforge|reporadarai|reporadar|placement pro\+?|placementpro)\b/gi, '')
+export function followUpRemainder(query) {
+  // Strip trailing project names so enrichment doesn't break ^...$ patterns.
+  // Trailing \b never fires after Placement Pro+'s plus: + is already a
+  // non-word character, so the next space is not a word boundary.
+  // The lookahead still refuses "placement professional".
+  return String(query || '').trim()
+    .replace(/\b(queryforgeai|queryforge|reporadarai|reporadar|placement pro\+?|placementpro)(?![a-z0-9])/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+}
+
+export function isElaborationRequest(query) {
+  const t = followUpRemainder(query).replace(/[^a-z0-9]+/g, ' ').trim();
+  const elaborates = /^(?:please )?(?:can you |could you )(?:explain(?: that)?|elaborate|expand on that|break that down)$/.test(t)
+    || /^(?:explain that|explain further|tell me more|go into more detail|give me more details|what do you mean|what about that|what does that mean)$/.test(t)
+    || /^(?:what else can you (?:explain|tell me)|what else is documented)$/.test(t);
+  if (!elaborates) return false;
+  // "Explain Placement Pro+" strips to "explain", which is not a match.
+  // A project name plus no continuation word is a real question. Enrichment
+  // can append the bound project after "explain that", and that still counts.
+  if (findExplicitProjects(query).length && !/\b(?:that|this|more|further|elaborate|expand|break|mean|detail|details|else)\b/.test(t)) {
+    return false;
+  }
+  return true;
+}
+
+export function isBoundFollowUpQuery(query) {
+  const t = followUpRemainder(query);
   if (!t) return false;
   if (/\bwhy that one\b|\bwhy this one\b|\bwhy that\b|\bwhy this\??\s*$/i.test(t)) return true;
   if (/^(and )?why\??$/i.test(t)) return true;
+  if (/^why does (?:it|that|this) work(?: that way)?\??$/i.test(t)) return true;
+  if (/^explain that\??\.?$/i.test(t)) return true;
+  if (/^what about that\??$/i.test(t)) return true;
+  if (/^what does that mean\??$/i.test(t)) return true;
   if (/^(and )?how\??$/i.test(t)) return true;
   if (/^how (does|did|do|is|was) (it|that|this|the architecture)\b/i.test(t)) return true;
   if (/^how does it work\??$/i.test(t)) return true;
@@ -235,6 +260,8 @@ export function isBoundFollowUpQuery(query) {
   // was stripped above, so this only matches a deictic technology question.
   if (/^(?:is|does|did|was|are|do) (?:it|that|this|he)\b/i.test(t) && /\b(?:built with|use|uses|using)\b/i.test(t)) return true;
   if (/^how does (?:its |the )?(?:skill-?gap|roadmap)\b/i.test(t)) return true;
+  if (/^can you explain how\??$/.test(t)) return true;
+  if (/^how does (?:its |the |this )architecture work\??$/.test(t)) return true;
   return false;
 }
 
@@ -315,7 +342,16 @@ export function classifyAnswerAspect(query) {
   const designChoice = /\bwhy\b.{0,48}\b(chosen|choose|chose|picked|prefer)\b/i.test(t)
     || /\bwhy\b.{0,36}\b(fastapi|flask|gemini|groq|netlify|render|react|minilm|networkx|octokit|vercel|next)\b/i.test(t);
 
-  if (/\b(apis?|endpoints?|external (?:apis?|services?|providers?)|third[- ]party)\b/i.test(t) && !competency) {
+  // Authentication and API errors name their own facets. A billing or
+  // GraphQL API is not the documented surface, so it stays unresolved here.
+  const authOrApiFailure = /\b(authenticat\w*|\bjwt\b|api\s+errors?|errors?\s+can\s+occur|failure handling)\b/i.test(t);
+  const unknownSpecificApi = /\b(?:billing|graphql|webhook|grpc|kubernetes)\s+apis?\b/i.test(t);
+  const ownSurface = /\bapi surface\b/i.test(t)
+    || /\b(endpoints?|routes?)\b/i.test(t)
+    || /\bbackend interface\b/i.test(t)
+    || /\bclients?\s+communicate\s+with\s+the\s+backend\b/i.test(t)
+    || /\b(apis?|endpoints?|external (?:apis?|services?|providers?)|third[- ]party)\b/i.test(t);
+  if (ownSurface && !competency && !authOrApiFailure && !unknownSpecificApi) {
     return 'api';
   }
 
@@ -344,8 +380,9 @@ export function classifyAnswerAspect(query) {
   const analyzesTargetArchitecture = /\banaly[sz]e\b.{0,40}\barchitect/i.test(t)
     || /\btarget(?:'s| repo)? architecture\b/i.test(t);
   const explainsOwnArchitecture = !analyzesTargetArchitecture && (
-    (/\b(explain|describe|what is|what's|show)\b.{0,48}\barchitect/i.test(t))
+    (/\b(explain|describe|what is|what's|show|what about)\b.{0,48}\barchitect/i.test(t))
     || /\barchitect\w*\s+of\b/i.test(t)
+    || /\bhow does (?:its |the |this )?architect\w* work\b/i.test(t)
   );
   const howBuilt = /\bhow (?:is|was)\b.{0,48}\b(?:built|designed|structured)\b/i.test(t);
   const portfolioWide = /\b(five[- ]layer|overall architecture|portfolio architecture|in general)\b/i.test(t);
@@ -584,6 +621,17 @@ export function enrichBoundContext(query, {
   if (attachment === 'follow-set') {
     const enriched = append(bound);
     return { query: enriched, focusProject: null, enriched: enriched !== query };
+  }
+  // "The other project" is not the project already in focus, and it does
+  // not name a replacement. Leave it unresolved instead of repeating that project.
+  // "Can you expand on that?" has no selected project. The visible card
+  // is not the thing "that" refers to.
+  if (isElaborationRequest(query) && !lastProject && bound.length < 2) {
+    return { query, focusProject: null, enriched: false };
+  }
+  const wantsAnother = /\bthe other\b/i.test(String(query || ''));
+  if (wantsAnother && attachment !== 'explicit') {
+    return { query, focusProject: null, enriched: false };
   }
   if (attachment === 'follow-one' && lastProject) {
     const enriched = append([lastProject]);

@@ -30,8 +30,9 @@ import {
   getEngineeringIdentity,
   getIdentityClaimsByFacet,
 } from './identity.js';
-import { classifyAnswerAspect, classifyConversationMode, isBackendAspectQuery, isBoundFollowUpQuery, isDatabaseAspectQuery, isFrontendAspectQuery, isYesNoTechnologyAsk } from './conversation.js';
-import { getProject } from './knowledge.js';
+import { buildQuestionFrame, classifyAnswerAspect, classifyConversationMode, followUpRemainder, isBackendAspectQuery, isBoundFollowUpQuery, isDatabaseAspectQuery, isElaborationRequest, isFrontendAspectQuery, isYesNoTechnologyAsk } from './conversation.js';
+import { getProject, isDocumentedConceptAlias, isPortfolioOrProjectStackName, portfolioTechnologyNote, projectStackEvidenceLine, speakConceptAlias, speakProjectAliasRecord, speakProjectStackEvidence, speakStackInventory, speakStackMembership } from './knowledge.js';
+import { matchAnswerTechNames, matchDescriptiveAliases } from './entities.js';
 import {
   isQueryForgeQuery,
   matchQueryForgeFacet,
@@ -288,8 +289,17 @@ function resolveCrossProjectQuestion(query, ctx = {}) {
   let ids = [];
   if (named.length >= 2) ids = named;
   else if (comparison && fromEntities.length >= 2) ids = fromEntities;
-  else if (portfolioWide) ids = ['queryforge', 'placementpro', 'reporadar'];
+  else if (portfolioWide) {
+    // "Kubernetes on each project?" during a two-project comparison means
+    // those two projects. "All three" still means the whole portfolio.
+    const topic = explicitComparisonSubject(query);
+    if (topic && bound.length >= 2 && !/\b(?:all three|these three|the three)\b/i.test(t)) ids = bound;
+    else ids = ['queryforge', 'placementpro', 'reporadar'];
+  }
   else if (followUp && bound.length >= 2 && named.length === 0) ids = bound;
+  // "Are they using Kubernetes?" refers to the open comparison even though
+  // "they" is not one of the short follow-up pronouns.
+  else if (explicitComparisonSubject(query) && bound.length >= 2 && named.length === 0) ids = bound;
   else if (named.length === 1 && named[0] === 'queryforge' && /\bminilm\b|all-minilm/i.test(t)) {
     ids = ['queryforge', 'placementpro'];
   } else {
@@ -309,9 +319,9 @@ function resolveCrossProjectQuestion(query, ctx = {}) {
   else if (aspect === 'architecture') lens = 'architecture';
   else if (/what would you (improve|change|rebuild)/i.test(t)) lens = 'intent';
   else if (/^why\??$|^(and )?why\b/i.test(t)) lens = 'why';
-  else if (/\bminilm\b/.test(t) || /machine learning|\bml\b|generative|\bllm\b|what model|which model|uses an llm|uses ml/.test(t)) lens = 'model';
+  else if (/\bminilm\b/.test(t) || /machine learning|\bml\b|generative|\bllm\b|\bmodels?\b|\bgemini\b|\bgroq\b|what model|which model|uses an llm|uses ml/.test(t)) lens = 'model';
   else if (/heuristic|deterministic/.test(t)) lens = 'heuristic';
-  else if (/persist|storage|\bdatabase\b/.test(t)) lens = 'storage';
+  else if (/persist|storage|\bdatabases?\b/.test(t)) lens = 'storage';
   else if (/input data|obtain their input|what does each project/.test(t)) lens = 'input';
   else if (/github|metadata/.test(t)) lens = 'github';
   else if (/skill-?gap/.test(t)) lens = 'skill';
@@ -322,8 +332,255 @@ function resolveCrossProjectQuestion(query, ctx = {}) {
   else if (/what connects|connect these/.test(t)) lens = 'connect';
   else if (/pattern/.test(t)) lens = 'differentiate';
   else if (/backend|architect|share one architecture|most different/.test(t)) lens = 'architecture';
+  else if (/\b(?:flask|fastapi|uvicorn|react|vite|next\.?js)\b/.test(t)) lens = 'stack';
 
-  return { ids, lens, priorLens: ctx?.memory?.lastCommitment?.lens || null };
+  const priorLens = ctx?.memory?.lastCommitment?.lens || null;
+  // A named technology is not the product overview. Keep the comparison,
+  // and let synthesis say whether the records actually cover that subject.
+  const subject = lens === 'differentiate' ? explicitComparisonSubject(query) : null;
+  const concept = lens === 'differentiate' ? documentedConceptInQuery(query) : null;
+  if (concept && ids.length >= 2) {
+    return { ids, lens: 'subject', priorLens, subject: concept, concept };
+  }
+  if (subject && ids.length >= 2) {
+    return { ids, lens: 'subject', priorLens, subject };
+  }
+  return { ids, lens, priorLens };
+}
+
+function comparisonSubjectToken(raw) {
+  const word = String(raw || '').replace(/^[“"']+|[”"'.?!]+$/g, '');
+  if (!word || word.length < 3) return null;
+  if (/^(?:the|a|an|their|both|each|this|that|these|those|it|them|they|its|his|her|same|approach|thing|way|project|projects|system|systems|something)$/i.test(word)) return null;
+  // These already have a comparison lens. They are not an undocumented subject.
+  if (/^(?:architecture|architectures|database|databases|storage|api|apis|model|models|minilm|backend|backends|frontend|frontends|sql|github|heuristic|heuristics|stack)$/i.test(word)) return null;
+  return word;
+}
+
+function isProjectNameToken(word) {
+  const token = String(word || '').replace(/\++$/g, '');
+  return /^(?:queryforgeai|queryforge|reporadarai|reporadar|placementpro|placement|pro)$/i.test(token);
+}
+
+/**
+ * The technology a comparison is asking about.
+ * A relation word still works ("use Kubernetes", "Kubernetes setup").
+ * So does one technology left after comparison glue ("Kubernetes for both?",
+ * "Kubernetes comparison?"). Architecture, database, API, and model stay on
+ * their own lenses. A bare "I read about Kubernetes" does not match.
+ */
+function explicitComparisonSubject(query) {
+  const t = String(query || '');
+  const head = t.match(/\b([a-z0-9][a-z0-9.+-]{2,})\s+(?:setups?|configurations?|deployments?|integrations?|implementations?)\b/i);
+  const fromHead = comparisonSubjectToken(head?.[1]);
+  if (fromHead) return fromHead;
+  const used = t.match(/\b(?:use|uses|using|support|supports|supporting)\s+(?:the\s+|a\s+|an\s+)?([a-z0-9][a-z0-9.+-]{2,})/i);
+  const fromUse = comparisonSubjectToken(used?.[1]);
+  if (fromUse) return fromUse;
+  if (!/\b(?:both|each|their|comparison|implementations?)\b/i.test(t) && !/\bwhat about\b/i.test(t)) return null;
+  const glue = /^(?:what|whats|what's|about|for|on|with|and|of|in|to|from|comparison|compare|implementation|implementations|setup|setups|configuration|configurations|deployment|deployments|integration|integrations|yesterday|read|just|only|does|did|do|is|are|was|how|why|who|can|could|which|tell|me|more|differ|different|difference|between|versus|vs|one|its|the|a|an|both|each|their)$/i;
+  const subjects = [];
+  for (const token of t.toLowerCase().split(/[^a-z0-9.+-]+/)) {
+    if (!token || glue.test(token) || isProjectNameToken(token)) continue;
+    const accepted = comparisonSubjectToken(token);
+    if (accepted && !subjects.includes(accepted)) subjects.push(accepted);
+  }
+  return subjects.length === 1 ? subjects[0] : null;
+}
+
+/**
+ * "I read about Kubernetes yesterday." names a technology and does not ask
+ * about a project, a comparison, or the portfolio stack.
+ */
+const PORTFOLIO_HISTORY_RE = /\b(?:do you know|does he know|have you used|has he used|do you use|does he use|are you familiar with|is he familiar with|do you have experience with|does he have experience with|proficient|proficiency|how experienced|experience with|expertise)\b/i;
+
+/**
+ * A portfolio-history or proficiency question names one technology and no project.
+ * Stack membership and personal proficiency are answered separately.
+ */
+function portfolioHistorySubject(query) {
+  const text = String(query || '').trim();
+  if (!text || !PORTFOLIO_HISTORY_RE.test(text)) return null;
+  if (/\bstack\b/i.test(text) && /\b(?:listed|in his|in your|in the|part of)\b/i.test(text)) return null;
+  if (namedCrossProjectIds(text).length) return null;
+  const hits = matchAnswerTechNames(text);
+  if (hits.length !== 1) return null;
+  return hits[0];
+}
+
+function stackMembershipRequest(query) {
+  const text = String(query || '').trim();
+  if (!text || namedCrossProjectIds(text).length) return null;
+  if (/\bwhat\b/i.test(text) && /\btechnolog/i.test(text) && /\bstack\b/i.test(text)) {
+    return { inventory: true };
+  }
+  if (!/\bstack\b/i.test(text) || !/\b(?:in|listed|part of|include|contain)\b/i.test(text)) return null;
+  const hits = matchAnswerTechNames(text);
+  if (hits.length !== 1) return null;
+  return { subject: hits[0] };
+}
+
+/**
+ * A broad concept such as "containers" or "version control". The taxonomy
+ * alias does not select Docker, PostgreSQL, or Git. A named project, an
+ * explicit technology, or a database/backend/frontend question keeps its
+ * own route.
+ */
+function descriptiveConceptRequest(query) {
+  const text = String(query || '').trim();
+  if (!text || namedCrossProjectIds(text).length) return null;
+  if (matchAnswerTechNames(text).length) return null;
+  if (isDatabaseAspectQuery(text) || isBackendAspectQuery(text) || isFrontendAspectQuery(text)) return null;
+  const described = matchDescriptiveAliases(text);
+  if (described.length !== 1) return null;
+  if (isDocumentedConceptAlias(described[0].label) || isDocumentedConceptAlias(described[0].alias)) return null;
+  const asksList = /\bstack\b/i.test(text) && /\b(?:listed|list|include|includes|in|part of)\b/i.test(text);
+  const asking = PORTFOLIO_HISTORY_RE.test(text)
+    || asksList
+    || (/\b(?:what|which)\b/i.test(text) && /\b(?:use|uses|used|technology|technologies|tool|tools)\b/i.test(text));
+  if (!asking) return null;
+  return { alias: described[0].label, asksList };
+}
+
+/**
+ * A documented behavior such as caching. An explicit technology name wins.
+ */
+function documentedConceptInQuery(query) {
+  const text = String(query || '').toLowerCase();
+  if (!text || matchAnswerTechNames(text).length) return null;
+  const names = [];
+  for (const id of ['queryforge', 'placementpro', 'reporadar']) {
+    for (const facet of facetsForProject(id)) {
+      const name = String(facet.facet || '').toLowerCase();
+      if (name && isDocumentedConceptAlias(name) && !names.includes(name)) names.push(name);
+    }
+  }
+  const hits = names.filter((name) => {
+    if (!isDocumentedConceptAlias(name)) return false;
+    if (new RegExp(`(?:^|[^a-z0-9])${name}(?=$|[^a-z0-9])`, 'i').test(text)) return true;
+    const stem = name.replace(/ing$/, '');
+    return new RegExp(`(?:^|[^a-z0-9])${stem}(?:e|es|ing)?(?=$|[^a-z0-9])`, 'i').test(text);
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
+function conceptFacetSentences(projectId, concept) {
+  const sentences = [];
+  for (const facet of facetsForProject(projectId)) {
+    if (facet.confidence !== 'documented') continue;
+    if (facet.depth === 'overview' || facet.depth === 'unknown') continue;
+    if (facet.facet !== concept) continue;
+    for (const part of String(facet.text || '').split(/(?<=[.!?])\s+/)) {
+      const sentence = part.trim();
+      if (!sentence || sentences.includes(sentence)) continue;
+      sentences.push(sentence);
+      if (sentences.length >= 3) return sentences;
+    }
+  }
+  return sentences;
+}
+
+function speakConceptRecord(classification) {
+  const concept = classification?.concept || 'that behavior';
+  const ids = ['queryforge', 'placementpro', 'reporadar'];
+  const still = classification?.elaborate ? `This is still the documented ${concept} record. ` : '';
+  const blocks = [];
+  const missing = [];
+  for (const id of ids) {
+    const sentences = conceptFacetSentences(id, concept);
+    const name = getProject(id)?.name || id;
+    if (sentences.length) blocks.push(`**${name}.** ${sentences.join(' ')}`);
+    else missing.push(name);
+  }
+  const lead = `${still}${missing.length
+    ? `${missing.join(' and ')} ${missing.length > 1 ? 'do' : 'does'} not have a documented ${concept} record. I will not invent one. `
+    : ''}This is project documentation. It is not a record of personal proficiency.`;
+  return `${lead} ${blocks.join(' ')}`.trim();
+}
+
+function incidentalMentionLabel(query) {
+  const named = matchAnswerTechNames(query);
+  if (named.length) return named.join(' and ');
+  const described = matchDescriptiveAliases(query);
+  if (!described.length) return '';
+  return described.map((item) => item.label).join(' and ');
+}
+
+function isIncidentalTechnologyMention(query) {
+  const t = String(query || '').trim();
+  if (!t || /[?]/.test(t)) return false;
+  if (/\b(?:what|whats|what's|how|why|who|does|did|do|is|are|can|could|which|compare|comparison|both|each|their)\b/i.test(t)) return false;
+  if (explicitComparisonSubject(t)) return false;
+  if (namedCrossProjectIds(t).length) return false;
+  return Boolean(incidentalMentionLabel(query));
+}
+
+function speakIncidentalTechnologyMention(query, ctx) {
+  const label = incidentalMentionLabel(query) || 'That';
+  const keep = boundCrossProjectIds(ctx).length >= 2 ? ' I will keep both projects.' : '';
+  return `I noted ${label}. That mention does not choose a project or start a comparison.${keep}`;
+}
+
+function subjectEvidenceSentences(projectId, subject) {
+  const re = new RegExp(`(?:^|[^a-z0-9])${String(subject).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[^a-z0-9])`, 'i');
+  const sentences = [];
+  for (const facet of facetsForProject(projectId)) {
+    if (facet.confidence !== 'documented') continue;
+    if (facet.depth === 'overview' || facet.depth === 'unknown') continue;
+    for (const sentence of String(facet.text || '').split(/(?<=[.!?])\s+/)) {
+      const trimmed = sentence.trim();
+      if (trimmed && re.test(trimmed) && !sentences.includes(trimmed)) sentences.push(trimmed);
+      if (sentences.length >= 3) return sentences;
+    }
+  }
+  return sentences;
+}
+
+function displaySubject(subject) {
+  const known = YESNO_TECHS.find((tech) => new RegExp(`^${tech.source}$`, 'i').test(subject));
+  if (known) return known.label;
+  if (/^[a-z]/.test(subject) && !/[A-Z]/.test(subject)) {
+    return subject.charAt(0).toUpperCase() + subject.slice(1);
+  }
+  return subject;
+}
+
+function speakComparisonSubject(classification) {
+  const ids = classification?.projectIds || [];
+  const subject = displaySubject(classification?.subject || 'that');
+  const evidence = Object.fromEntries(ids.map((id) => [id, classification?.concept
+    ? conceptFacetSentences(id, classification.concept)
+    : subjectEvidenceSentences(id, classification?.subject || '')]));
+  const covered = ids.filter((id) => evidence[id].length);
+  const missing = ids.filter((id) => !evidence[id].length);
+  const still = classification?.elaborate ? 'still ' : '';
+  const keep = ids.length === 2 ? 'I will keep both projects.' : 'I will keep these projects.';
+  const offer = `${keep} Which documented comparison should I expand: architecture, the database, the API, or what model each one uses?`;
+  if (!covered.length) {
+    const stackNotes = isPortfolioOrProjectStackName(classification?.subject)
+      ? `${ids.map((id) => projectStackEvidenceLine(id, classification.subject)).join(' ')} `
+      : '';
+    const described = matchDescriptiveAliases(classification?.subject || '');
+    const rename = described.length === 1
+      && described[0].canonical.toLowerCase() !== String(classification?.subject || '').toLowerCase()
+      ? `I will not rename ${subject} to ${described[0].canonical}. `
+      : '';
+    return `${stackNotes}${rename}I ${still}don't have documented evidence of how either project uses ${subject}. I will not treat that as proof that they do not use it, and I will not invent an implementation. ${offer}`;
+  }
+  const blocks = covered.map((id) => {
+    const name = getProject(id)?.name || id;
+    return `**${name}.** ${evidence[id].join(' ')}`;
+  });
+  if (missing.length) {
+    const gaps = missing.map((id) => getProject(id)?.name || id).join(' or ');
+    const verb = missing.length > 1 ? 'use' : 'uses';
+    const proof = missing.length > 1 ? 'they do' : 'it does';
+    return `${blocks.join('\n\n')}\n\nI ${still}don't have documented evidence of how ${gaps} ${verb} ${subject}. I will not treat that absence as proof that ${proof} not use ${subject}. ${offer}`;
+  }
+  const lead = classification?.elaborate
+    ? `That ${subject} comparison is still the documented record. I will not invent a further difference.`
+    : '';
+  return [lead, ...blocks].filter(Boolean).join('\n\n');
 }
 
 const ASPECT_FOCUS = {
@@ -348,27 +605,131 @@ function pendingProjectCommitment(ctx) {
 function bareProjectChoice(query) {
   const ids = namedCrossProjectIds(query);
   if (ids.length !== 1) return null;
-  const stripped = String(query || '').toLowerCase()
-    .replace(/queryforgeai|queryforge|reporadarai|repo\s*radar|reporadar|placement\s*pro\+?|placementpro/g, ' ')
-    .replace(/\b(i|mean|the|please|one|project|its|it|a|an)\b/g, ' ')
+  const normalized = String(query || '').toLowerCase()
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ');
+  // "want" and "discuss" count only inside an actual move to a project.
+  // "I prefer QueryForgeAI" and "I want QueryForgeAI" stay mentions.
+  const moving = /\b(?:switch|discuss)\b/.test(normalized);
+  const glue = moving
+    ? 'i|mean|the|please|one|project|its|it|a|an|let|lets|switch|to|want|wanna|now|discuss'
+    : 'i|mean|the|please|one|project|its|it|a|an|let|lets|switch|to';
+  const stripped = normalized
+    .replace(/queryforgeai|queryforge|reporadarai|repo\s*radar|reporadar|placement\s*pro|placementpro/g, ' ')
+    .replace(new RegExp(`\\b(?:${glue})\\b`, 'g'), ' ')
     .replace(/[^a-z0-9]+/g, '');
   return stripped ? null : ids[0];
+}
+
+/**
+ * A sentence names one project but does not choose it and does not ask
+ * anything about it. "I saw QueryForgeAI mentioned online" is a mention.
+ * "Tell me about QueryForgeAI" and "Let's switch to RepoRadar" are not.
+ */
+export function isIncidentalProjectMention(query) {
+  if (namedCrossProjectIds(query).length !== 1) return false;
+  if (bareProjectChoice(query)) return false;
+  if (classifyAnswerAspect(query)) return false;
+  if (isGenuineProjectOverviewQuery(query)) return false;
+  if (isYesNoTechnologyAsk(query)) return false;
+  if (isEngineeringDetailQuery(query)) return false;
+  const t = String(query || '');
+  if (/\b(what|how|why|which|when|where|who|does|do|did|can|could|would|explain|describe|compare|versus|difference)\b/i.test(t)) return false;
+  if (matchAnswerTechNames(query).length === 1
+    && /\bstack\b/i.test(t)
+    && /\b(?:listed|list|include|includes|including)\b/i.test(t)) return false;
+  if (/\b(walk (?:me )?through|deep dive|show me|open (?:the )?project)\b/i.test(t)) return false;
+  if (/\bvs\.?\b/i.test(t)) return false;
+  if (/\btell me about\b/i.test(t)) return false;
+  return true;
+}
+
+/** A pointer the current turn cannot resolve to a named project. */
+function isUnresolvedProjectPointer(query) {
+  const t = String(query || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return /^(that one|this one|the first one|the second one|the third one|the other one|the other project|the other|both|both of them|what about the other one)$/.test(t);
 }
 
 function routePendingProjectChoice(query, ctx) {
   const pending = pendingProjectCommitment(ctx);
   const id = bareProjectChoice(query);
   if (!pending || !id || !pending.aspect) return null;
-  const focusKey = pending.aspect === 'database' ? 'database' : 'stack';
+  const focusKey = pending.aspect === 'database'
+    ? 'database'
+    : pending.aspect === 'architecture'
+      ? 'architecture'
+      : 'stack';
   const focus = ASPECT_FOCUS[id]?.[focusKey];
   const task = DETAIL_TASK[id];
   if (!focus || !task) return null;
   const aspect = pending.aspect === 'database'
-    ? 'database'
-    : pending.aspect === 'backend'
-      ? 'backend'
-      : 'stack';
+    || pending.aspect === 'backend'
+    || pending.aspect === 'frontend'
+    || pending.aspect === 'architecture'
+    ? pending.aspect
+    : 'stack';
   return { strategy: 'Summarize', task, focus, aspect };
+}
+
+/**
+ * "Explain the architecture" with no project in the text.
+ * Portfolio-wide wording stays on the teaching diagram. Otherwise the
+ * active comparison or established project answers, the visible card is
+ * only a fallback, and no context means ask which project.
+ */
+function isBareArchitectureExplanation(query) {
+  const t = String(query || '').toLowerCase().trim();
+  return /\b(explain|describe|what is|what's|show|what about)\b.{0,48}\barchitect/.test(t)
+    || /\barchitect\w*\s+of\b/.test(t)
+    || /\bhow does (?:its |the |this )?architect\w* work\b/.test(t);
+}
+
+function isPortfolioWideArchitecture(query) {
+  return /\b(overall|whole|entire|five[- ]?layer|portfolio|in general|generally)\b/i
+    .test(String(query || ''));
+}
+
+function singleBoundProject(ctx) {
+  const id = ctx?.memory?.lastCommitment?.projectId || ctx?.memory?.lastProject || null;
+  return id && ASPECT_FOCUS[id] ? id : null;
+}
+
+function routeUnscopedArchitectureAsk(query, ctx) {
+  const t = String(query || '').toLowerCase().trim();
+  if (!isBareArchitectureExplanation(t) || namedCrossProjectIds(t).length > 0) return null;
+
+  if (isPortfolioWideArchitecture(t)) {
+    return { strategy: 'Explain', task: 'arch_why' };
+  }
+  if (pendingProjectCommitment(ctx)) {
+    return { strategy: 'Summarize', task: 'context_clarify', aspect: 'architecture' };
+  }
+  const compared = boundCrossProjectIds(ctx);
+  if (compared.length >= 2) {
+    return {
+      strategy: 'Compare',
+      task: 'cross_project_compare',
+      projectIds: compared,
+      lens: 'architecture',
+      priorLens: ctx?.memory?.lastCommitment?.lens || null,
+    };
+  }
+  const established = singleBoundProject(ctx);
+  const framed = ctx?.questionFrame?.projectId;
+  // "Explain the architecture" can use the visible card when nothing else
+  // is bound. "What about the architecture?" does not: the card is not a
+  // selection, so an unresolved project stays a clarification.
+  const deictic = /\bwhat about\b|\bhow does (?:its |the |this )\b/i.test(t);
+  const id = established || (!deictic && framed && ASPECT_FOCUS[framed] ? framed : null);
+  if (id) {
+    return {
+      strategy: 'Summarize',
+      task: DETAIL_TASK[id],
+      focus: ASPECT_FOCUS[id].architecture,
+      aspect: 'architecture',
+    };
+  }
+  return { strategy: 'Summarize', task: 'context_clarify', aspect: 'architecture' };
 }
 
 /**
@@ -671,6 +1032,444 @@ function speakProductDifference(ids) {
   return blocks.join('\n\n');
 }
 
+function isConversationInterruption(query) {
+  const t = String(query || '').trim();
+  if (/^(?:hi|hey|hello|thanks|thank you|good morning|good evening)\b/i.test(t)) return true;
+  if (/\b(?:who are you|what are you)\b/i.test(t)) return true;
+  if (isIncidentalTechnologyMention(query)) return true;
+  return isIncidentalProjectMention(query);
+}
+
+/** A short "How?" continues the previous subject. It does not name a new one. */
+function isSubjectHowFollowUp(query) {
+  const core = followUpRemainder(query).replace(/[^a-z0-9]+/g, ' ').trim();
+  return /^(?:and )?how$/.test(core)
+    || /^how does (?:it|that|this) work$/.test(core)
+    || /^can you explain how$/.test(core);
+}
+
+function priorSubstantiveVisitorQuery(memory, _currentQuery) {
+  const users = (memory?.turns || [])
+    .filter((turn) => turn.role === 'user')
+    .map((turn) => String(turn.text || ''));
+  for (const text of users.slice(0, -1).reverse()) {
+    if (!text.trim()) continue;
+    if (isElaborationRequest(text)) continue;
+    if (isSubjectHowFollowUp(text)) continue;
+    if (isConversationInterruption(text)) continue;
+    return text;
+  }
+  return null;
+}
+
+function elaborationSubject(query, aspect, focus) {
+  const t = String(query || '');
+  if (isDatabaseAspectQuery(t) || aspect === 'database') return 'database';
+  if (isFrontendAspectQuery(t) || aspect === 'frontend') return 'frontend';
+  if (isBackendAspectQuery(t)) return 'backend';
+  if (/score|health score|calculated/i.test(t) || /scoring/.test(String(focus || ''))) return 'scoring';
+  if (aspect === 'architecture' || /\barchitect/i.test(t)) return 'architecture';
+  if (aspect === 'flow' || /\bhow\b/i.test(t)) return 'flow';
+  return 'facet';
+}
+
+function sentenceMatchesSubject(sentence, subject) {
+  if (subject === 'frontend') return /\bfrontend\b/i.test(sentence) && !/\b(?:fastapi|uvicorn|flask)\b/i.test(sentence);
+  if (subject === 'backend') return /\b(?:backend|fastapi|uvicorn|flask|gunicorn)\b/i.test(sentence);
+  if (subject === 'database') return /\b(?:database|sqlite|postgres|sqlalchemy|persist|explain)\b/i.test(sentence);
+  if (subject === 'scoring') return /\b(?:score|health|bucket|bus factor|heuristic)\b/i.test(sentence);
+  return true;
+}
+
+function alreadyCovered(sentence, spoken) {
+  const left = String(sentence || '').toLowerCase();
+  const right = String(spoken || '').toLowerCase().replace(/^[^:]{0,48}:\s*/, '');
+  if (!left || !right) return false;
+  if (right.length > 20 && left.includes(right.slice(0, 40))) return true;
+  return left.split(/;/).some((part) => {
+    const piece = part.trim();
+    return piece.length > 12 && right.includes(piece.slice(0, 32));
+  });
+}
+
+function elaborationLimit(projectId) {
+  const name = getProject(projectId)?.name || 'this project';
+  return `That is the full documented record for ${name}. I don't have a further breakdown that isn't already in that answer, and I will not invent one.`;
+}
+
+function facetsForProject(projectId) {
+  if (projectId === 'queryforge') return QUERYFORGE_FACETS;
+  if (projectId === 'placementpro') return PLACEMENTPRO_FACETS;
+  if (projectId === 'reporadar') return REPORADAR_FACETS;
+  return [];
+}
+
+function facetForNamedTechnology(projectId, technology) {
+  const escaped = String(technology || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!escaped) return null;
+  const re = new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, 'i');
+  let database = null;
+  let first = null;
+  for (const facet of facetsForProject(projectId)) {
+    if (facet.confidence !== 'documented') continue;
+    if (facet.depth === 'overview' || facet.depth === 'unknown') continue;
+    if (!re.test(String(facet.text || ''))) continue;
+    if (!first) first = facet;
+    if (facet.facet === 'database') database = facet;
+  }
+  return database || first;
+}
+
+function matchFacetForProject(projectId) {
+  if (projectId === 'queryforge') return matchQueryForgeFacet;
+  if (projectId === 'placementpro') return matchPlacementProFacet;
+  if (projectId === 'reporadar') return matchRepoRadarFacet;
+  return null;
+}
+
+/**
+ * A menu label has to be a cue the existing matcher sends back to this facet,
+ * and it has to name the facet. A long incidental cue is not a facet name.
+ */
+function roundTripFacetLabel(facet, projectName, match) {
+  const titleWords = String(facet.title || '').toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2);
+  const cues = (facet.cues || []).filter((cue) => (
+    typeof cue === 'string'
+    && cue.length >= 4
+    && cue.length <= 32
+    && !/[\\^$.*+?()[\]{}|]/.test(cue)
+    && !/^(?:why|what|how|when|which|does|is|do)\b/i.test(cue)
+  ));
+  const ranked = cues.map((cue) => {
+    const words = cue.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    const overlap = words.filter((word) => titleWords.includes(word)).length;
+    const dangling = /(?:\s(?:of|to|for|the|a))$/i.test(cue) ? 1 : 0;
+    return { cue, overlap, words: words.length, dangling };
+  }).filter((item) => item.overlap > 0)
+    .sort((a, b) => b.overlap - a.overlap || a.dangling - b.dangling || a.words - b.words || a.cue.length - b.cue.length);
+  for (const item of ranked) {
+    const hit = match(`What about ${item.cue}? ${projectName}`);
+    if (hit?.id === facet.id) return item.cue;
+  }
+  return null;
+}
+
+/**
+ * Documented neighbors of the facet just spoken.
+ * Same family, then facets that already share a comparison lens with it,
+ * then the project's architecture, API, database, and flow facets,
+ * then the rest of the knowledge-module order.
+ */
+function relatedFacetOrder(projectId, currentId) {
+  const facets = facetsForProject(projectId);
+  const current = facets.find((facet) => facet.id === currentId);
+  const family = String(current?.facet || '').split('.')[0];
+  const ordered = [];
+  const push = (id) => {
+    if (!id || id === currentId || ordered.includes(id)) return;
+    const facet = facets.find((item) => item.id === id);
+    if (!facet || facet.confidence !== 'documented' || facet.depth === 'overview') return;
+    ordered.push(id);
+  };
+  if (family) {
+    for (const facet of facets) {
+      if (String(facet.facet).split('.')[0] === family) push(facet.id);
+    }
+  }
+  if (currentId) {
+    for (const lens of Object.keys(CROSS_LENS_FACETS)) {
+      const ids = CROSS_LENS_FACETS[lens][projectId] || [];
+      if (!ids.includes(currentId)) continue;
+      for (const id of ids) push(id);
+    }
+  }
+  const aspects = ASPECT_FOCUS[projectId] || {};
+  for (const key of ['architecture', 'api', 'database', 'flow']) push(aspects[key]);
+  for (const facet of facets) push(facet.id);
+  return ordered.map((id) => facets.find((facet) => facet.id === id));
+}
+
+function labelRoutesToFacet(projectId, facetId, label) {
+  const name = getProject(projectId)?.name || '';
+  const query = `What about ${label}? ${name}`;
+  const task = DETAIL_TASK[projectId];
+  const memory = {
+    turns: [],
+    lastProject: projectId,
+    lastCommitment: { projectId, name, task },
+    activeMode: task,
+    profile: { type: 'unknown' },
+  };
+  const questionFrame = buildQuestionFrame(query, { memory, focusProject: projectId });
+  const result = classifyReasoningStrategy(query, { questionFrame, memory });
+  return result?.task === task && result?.focus === facetId;
+}
+
+function asksOwnApiSurface(query) {
+  const t = String(query || '').toLowerCase();
+  if (/\b(external|third[- ]party|providers?)\b/.test(t)) return false;
+  if (/\b(authenticat|\bjwt\b|api\s+errors?|errors?\s+can\s+occur|failure handling)\b/.test(t)) return false;
+  return /\b(api surface|endpoints?|routes?|backend interface|apis?)\b/.test(t)
+    || /\bclients?\s+communicate\s+with\s+the\s+backend\b/.test(t);
+}
+
+function routeAuthenticationAsk(query, ctx) {
+  if (!/\b(authenticat\w*|\bjwt\b)\b/i.test(query)) return null;
+  const named = namedCrossProjectIds(query);
+  if (named.length > 1) return null;
+  if (pendingProjectCommitment(ctx) && named.length === 0) return null;
+  const id = named[0] || singleBoundProject(ctx);
+  if (id === 'queryforge') return { strategy: 'Summarize', task: 'undocumented_detail' };
+  const focus = { placementpro: 'pp-auth', reporadar: 'rr-security' }[id];
+  if (!focus || !DETAIL_TASK[id]) return null;
+  return { strategy: 'Summarize', task: DETAIL_TASK[id], focus };
+}
+
+function routeApiFailureAsk(query, ctx) {
+  if (!/\b(api\s+errors?|errors?\s+can\s+occur)\b/i.test(query)) return null;
+  const named = namedCrossProjectIds(query);
+  if (named.length > 1) return null;
+  if (pendingProjectCommitment(ctx) && named.length === 0) return null;
+  const id = named[0] || singleBoundProject(ctx);
+  const focus = { queryforge: 'qf-failure', placementpro: 'pp-failure', reporadar: 'rr-failure' }[id];
+  if (!focus || !DETAIL_TASK[id]) return null;
+  return { strategy: 'Summarize', task: DETAIL_TASK[id], focus };
+}
+
+function routeTitledFacet(query, ctx) {
+  const named = namedCrossProjectIds(query);
+  if (named.length > 1) return null;
+  if (pendingProjectCommitment(ctx) && named.length === 0) return null;
+  const id = named[0] || singleBoundProject(ctx);
+  if (!id || !DETAIL_TASK[id]) return null;
+  const titled = documentedFacetTitle(query, id);
+  if (!titled) return null;
+  return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: titled.id };
+}
+
+function routeExplicitFacet(query, ctx) {
+  const titled = routeTitledFacet(query, ctx);
+  if (titled) return titled;
+  const named = namedCrossProjectIds(query);
+  if (named.length > 1) return null;
+  if (pendingProjectCommitment(ctx) && named.length === 0) return null;
+  const id = named[0] || singleBoundProject(ctx);
+  if (!id || !DETAIL_TASK[id]) return null;
+  if (named.length === 0) {
+    const aspect = classifyAnswerAspect(query);
+    if (aspect && ASPECT_FOCUS[id][aspect]) {
+      return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id][aspect], aspect };
+    }
+  }
+  return null;
+}
+
+function facetTitleLabel(facet) {
+  const title = String(facet.title || '').trim();
+  const parts = title.split(/\s[—–]\s/);
+  return (parts.length > 1 ? parts[parts.length - 1] : title).trim();
+}
+
+/**
+ * A documented facet whose title the visitor actually used.
+ * Overview titles are not a substitute for a specific question.
+ */
+function documentedFacetTitle(query, projectId) {
+  const t = String(query || '').toLowerCase();
+  if (/\banaly[sz]e\b.{0,40}\barchitect|\btarget(?:'s| repo)? architecture\b/.test(t)) return null;
+  let best = null;
+  let bestLen = 0;
+  for (const facet of facetsForProject(projectId)) {
+    if (facet.confidence !== 'documented' || facet.depth === 'overview') continue;
+    const title = facetTitleLabel(facet).toLowerCase();
+    if (title.length < 4 || title.length <= bestLen) continue;
+    const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (!new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, 'i').test(t)) continue;
+    best = facet;
+    bestLen = title.length;
+  }
+  return best;
+}
+
+function previousSameProjectFocus(memory, projectId, currentId) {
+  const substantive = [];
+  for (const turn of memory?.turns || []) {
+    if (turn.role !== 'user') continue;
+    const text = String(turn.text || '');
+    if (!text.trim() || isElaborationRequest(text) || isSubjectHowFollowUp(text) || isConversationInterruption(text)) continue;
+    substantive.push(text);
+  }
+  const previous = substantive.length >= 2 ? substantive[substantive.length - 2] : null;
+  if (!previous) return null;
+  const named = namedCrossProjectIds(previous);
+  if (named.length > 1) return null;
+  const bound = named[0] || projectId;
+  if (bound !== projectId) return null;
+  const stub = {
+    turns: [],
+    lastProject: bound,
+    lastCommitment: { projectId: bound, name: getProject(bound)?.name || '', task: DETAIL_TASK[bound] },
+    profile: memory?.profile || { type: 'unknown' },
+  };
+  const result = classifyReasoningStrategy(previous, {
+    questionFrame: buildQuestionFrame(previous, { memory: stub, focusProject: bound }),
+    memory: stub,
+    resolvingPrior: true,
+  });
+  const focus = result?.focus || null;
+  if (!focus || focus === currentId) return null;
+  if (projectIdFromDetailTask(result?.task) !== projectId) return null;
+  return focus;
+}
+
+function documentedFacetOffers(projectId, currentId, memory) {
+  const labels = [];
+  const name = getProject(projectId)?.name || '';
+  const match = matchFacetForProject(projectId);
+  const previousFocus = previousSameProjectFocus(memory, projectId, currentId);
+  const accept = (facet, label) => {
+    if (!facet || facet.id === currentId || facet.id === previousFocus) return false;
+    if (!label || labels.some((item) => item.toLowerCase() === label.toLowerCase())) return false;
+    if (!labelRoutesToFacet(projectId, facet.id, label)) return false;
+    labels.push(label);
+    return true;
+  };
+  for (const facet of relatedFacetOrder(projectId, currentId)) {
+    if (!accept(facet, facetTitleLabel(facet))) accept(facet, roundTripFacetLabel(facet, name, match));
+    if (labels.length === 3) break;
+  }
+  return labels;
+}
+
+function formatFacetOffer(labels) {
+  if (!labels.length) return '';
+  if (labels.length === 1) return ` You can ask about ${labels[0]}.`;
+  const head = labels.slice(0, -1).join(', ');
+  return ` You can ask about ${head}, or ${labels[labels.length - 1]}.`;
+}
+
+function projectIdMentioned(text) {
+  const t = String(text || '');
+  if (/queryforge/i.test(t)) return 'queryforge';
+  if (/placement/i.test(t)) return 'placementpro';
+  if (/reporadar|repo\s*radar/i.test(t)) return 'reporadar';
+  return null;
+}
+
+function substantiveQueryThrough(turns, endIndex) {
+  const users = [];
+  for (let i = 0; i <= endIndex; i += 1) {
+    if (turns[i]?.role === 'user') users.push(String(turns[i].text || ''));
+  }
+  for (const text of users.reverse()) {
+    if (!text.trim()) continue;
+    if (isElaborationRequest(text)) continue;
+    if (isSubjectHowFollowUp(text)) continue;
+    if (isConversationInterruption(text)) continue;
+    return text;
+  }
+  return null;
+}
+
+/**
+ * A menu suppresses only another completion of the same facet on the same
+ * project. The subject is the visitor question that produced that menu.
+ */
+function facetMenuAlreadySpoken(memory, projectId, focus) {
+  const turns = memory?.turns || [];
+  if (!projectId) return false;
+  for (let i = 0; i < turns.length; i += 1) {
+    const turn = turns[i];
+    if (turn.role !== 'assistant' || !/you can ask about/i.test(turn.text || '')) continue;
+    const menuProject = projectIdMentioned(turn.text);
+    if (menuProject && menuProject !== projectId) continue;
+    let userIndex = -1;
+    for (let j = i - 1; j >= 0; j -= 1) {
+      if (turns[j].role === 'user') {
+        userIndex = j;
+        break;
+      }
+    }
+    if (userIndex < 0) continue;
+    const anchor = substantiveQueryThrough(turns, userIndex);
+    if (!anchor) continue;
+    const bound = menuProject || projectId;
+    const stub = {
+      turns: turns.slice(0, userIndex + 1),
+      lastProject: bound,
+      lastCommitment: {
+        projectId: bound,
+        name: getProject(bound)?.name || '',
+        task: DETAIL_TASK[bound],
+      },
+      profile: memory.profile || { type: 'unknown' },
+    };
+    const result = classifyReasoningStrategy(anchor, {
+      questionFrame: buildQuestionFrame(anchor, { memory: stub, focusProject: bound }),
+      memory: stub,
+      resolvingPrior: true,
+    });
+    const resultProject = projectIdFromDetailTask(result?.task) || menuProject;
+    let resultFocus = result?.focus || null;
+    if (!resultFocus && (result?.task === 'project_overview' || result?.facetMenu)) {
+      resultFocus = ASPECT_FOCUS[bound]?.switch || null;
+    }
+    if (resultProject === projectId && (resultFocus || null) === (focus || null)) return true;
+  }
+  return false;
+}
+
+function assistantAlreadySaid(sentence, memory) {
+  const corpus = (memory?.turns || [])
+    .filter((turn) => turn.role === 'assistant')
+    .map((turn) => turn.text || '')
+    .join('\n');
+  return alreadyCovered(sentence, corpus);
+}
+
+function completedFacetReply(projectId, currentId, memory) {
+  const limit = elaborationLimit(projectId);
+  if (facetMenuAlreadySpoken(memory, projectId, currentId)) return limit;
+  return `${limit}${formatFacetOffer(documentedFacetOffers(projectId, currentId, memory))}`;
+}
+
+function elaborationMemory(ctx) {
+  return ctx?.memory || ctx?.ctx?.memory || null;
+}
+
+function speakStoredElaboration(task, ctx) {
+  const projectId = projectIdFromDetailTask(task);
+  const limit = elaborationLimit(projectId);
+  if (!projectId) return limit;
+  const memory = elaborationMemory(ctx);
+  const focus = ctx.classification?.focus || null;
+  if (ctx.classification?.facetMenu) {
+    if (facetMenuAlreadySpoken(memory, projectId, focus)) return limit;
+    const offer = formatFacetOffer(documentedFacetOffers(projectId, focus, memory));
+    if (!offer) return limit;
+    const name = getProject(projectId)?.name || 'this project';
+    return `That overview of ${name} is only the short version.${offer}`;
+  }
+  if (/_unknown$/.test(task)) {
+    return completedFacetReply(projectId, focus, memory);
+  }
+  const priorQuery = ctx.classification?.priorQuery || '';
+  const aspect = ctx.classification?.aspect;
+  const facets = facetsForProject(projectId);
+  const facet = facets.find((item) => item.id === focus);
+  if (!facet?.text) return completedFacetReply(projectId, focus, memory);
+  const spoken = speakFacetForAspect(task, facet, { aspect }, priorQuery) || '';
+  const subject = elaborationSubject(priorQuery, aspect, focus);
+  const name = getProject(projectId)?.name || 'This project';
+  const extras = facetSentences(facet.text).filter((sentence) => (
+    !alreadyCovered(sentence, spoken)
+    && !assistantAlreadySaid(sentence, memory)
+    && sentenceMatchesSubject(sentence, subject)
+  ));
+  if (!extras.length) return completedFacetReply(projectId, focus, memory);
+  return `${name}: ${extras.join(' ')}`;
+}
+
 function speakFacetForAspect(task, facet, classification, query) {
   const aspect = classification?.aspect || null;
   const projectId = projectIdFromDetailTask(task);
@@ -687,6 +1486,9 @@ function speakFacetForAspect(task, facet, classification, query) {
     if (spoken) return spoken;
   }
   if (aspect === 'api' && projectId) {
+    // Questions about this project's own endpoints use that facet.
+    // External-provider questions keep the provider-and-route contrast.
+    if (asksOwnApiSurface(query) && facet?.text) return facet.text;
     const spoken = speakApiContrast([projectId]);
     if (spoken) return spoken;
   }
@@ -699,6 +1501,16 @@ function speakFacetForAspect(task, facet, classification, query) {
   }
   if (aspect === 'backend' && facet) {
     const clause = backendClauseFromSentences(facetSentences(facet.text));
+    if (clause) {
+      const name = projectId ? getProject(projectId)?.name : '';
+      if (name && !new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(clause)) {
+        return `${name}: ${clause}`;
+      }
+      return clause;
+    }
+  }
+  if (aspect === 'frontend' && facet) {
+    const clause = frontendClauseFromSentences(facetSentences(facet.text));
     if (clause) {
       const name = projectId ? getProject(projectId)?.name : '';
       if (name && !new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(clause)) {
@@ -765,6 +1577,7 @@ function facetParagraphs(ids, lens, query) {
 function speakCrossProject(query, classification) {
   const ids = classification?.projectIds || [];
   const lens = classification?.lens || 'differentiate';
+  if (lens === 'subject') return speakComparisonSubject(classification);
   if (lens === 'api') {
     const spoken = speakApiContrast(ids);
     if (spoken) return spoken;
@@ -825,6 +1638,30 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   const mode = ctx?.questionFrame?.conversationMode || classifyConversationMode(query);
 
   if (!t) return { strategy: 'Describe', task: null };
+
+  // A statement that only mentions a technology is not a comparison and
+  // not a portfolio-history question.
+  if (isIncidentalTechnologyMention(query)) {
+    return { strategy: 'Describe', task: 'tech_mention' };
+  }
+
+  const stackRequest = stackMembershipRequest(query);
+  if (stackRequest) {
+    return { strategy: 'Describe', task: 'stack_membership', ...stackRequest };
+  }
+
+  // Portfolio history is not a project implementation question. The subject
+  // rides on this classification so a later elaboration can restate it
+  // from the visitor's question, without a new memory field.
+  const historySubject = portfolioHistorySubject(query);
+  if (historySubject) {
+    return { strategy: 'Describe', task: 'portfolio_history', subject: historySubject };
+  }
+
+  const conceptAlias = descriptiveConceptRequest(query);
+  if (conceptAlias) {
+    return { strategy: 'Describe', task: 'concept_alias', alias: conceptAlias.alias, asksList: conceptAlias.asksList === true };
+  }
 
   // --- V4.5 Mod 1: conversational intent gate (wins over entity/FAANG misfires) ---
   if (mode === 'preference_gap') {
@@ -888,6 +1725,125 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Explain', task: 'probe_failure_modes' };
   }
 
+  // An elaboration refers to the previous answer. The project and subject
+  // come from the visitor's earlier question, not from assistant text and
+  // not from the visible card. No separate memory field is required.
+  if (!ctx.resolvingPrior && isElaborationRequest(query)) {
+    const pending = pendingProjectCommitment(ctx);
+    if (pending) {
+      return { strategy: 'Summarize', task: 'context_clarify', aspect: pending.aspect || null };
+    }
+    if (boundCrossProjectIds(ctx).length >= 2) {
+      // "Tell me more" after an explicit subject stays on that subject.
+      // It must not replace a missing record with the product overview.
+      const prior = priorSubstantiveVisitorQuery(mem, query);
+      const priorRank = prior
+        ? classifyReasoningStrategy(prior, {
+          ...ctx,
+          resolvingPrior: true,
+          memory: mem,
+          questionFrame: buildQuestionFrame(prior, { memory: mem }),
+        })
+        : null;
+      if (['keep_two', 'best_engineering', 'justify_best_project', 'why_hire', 'demo_ai', 'engineer_type', 'arch_why'].includes(priorRank?.task)) {
+        return { ...priorRank, elaborate: true, priorQuery: prior };
+      }
+      const historySubject = portfolioHistorySubject(prior || '');
+      if (historySubject) {
+        return { strategy: 'Describe', task: 'portfolio_history', subject: historySubject, elaborate: true };
+      }
+      const conceptAlias = descriptiveConceptRequest(prior || '');
+      if (conceptAlias) {
+        return { strategy: 'Describe', task: 'concept_alias', alias: conceptAlias.alias, asksList: conceptAlias.asksList === true, elaborate: true };
+      }
+      const priorConcept = documentedConceptInQuery(prior || '');
+      if (priorConcept) {
+        const priorClass = classifyReasoningStrategy(prior, {
+          ...ctx,
+          resolvingPrior: true,
+          memory: mem,
+          questionFrame: buildQuestionFrame(prior, { memory: mem }),
+        });
+        if (priorClass?.projectIds?.length >= 2) return { ...priorClass, elaborate: true };
+      }
+      const subject = explicitComparisonSubject(prior || '');
+      if (subject) {
+        const priorClass = classifyReasoningStrategy(prior, {
+          ...ctx,
+          resolvingPrior: true,
+          memory: mem,
+          questionFrame: buildQuestionFrame(prior, { memory: mem }),
+        });
+        if (priorClass?.lens === 'subject' && priorClass.projectIds?.length >= 2) {
+          return { ...priorClass, elaborate: true };
+        }
+      }
+      return { strategy: 'Summarize', task: 'why_clarify', comparisonElaboration: true };
+    }
+    const prior = priorSubstantiveVisitorQuery(mem, query);
+    if (!prior) return { strategy: 'Describe', task: null };
+    const priorClass = classifyReasoningStrategy(prior, {
+      ...ctx,
+      resolvingPrior: true,
+      memory: mem,
+      questionFrame: buildQuestionFrame(prior, { memory: mem, focusProject: boundId }),
+    });
+    if (priorClass.task === 'portfolio_history' && priorClass.subject) {
+      return { ...priorClass, elaborate: true };
+    }
+    if (priorClass.task === 'concept_alias' && priorClass.alias) {
+      return { ...priorClass, elaborate: true };
+    }
+    if (priorClass.task === 'project_stack_evidence' || priorClass.task === 'project_alias_record') {
+      return { ...priorClass, elaborate: true };
+    }
+    if (priorClass.task === 'stack_membership') {
+      return { ...priorClass, elaborate: true };
+    }
+    if (priorClass.task === 'concept_record' && priorClass.concept) {
+      return { ...priorClass, elaborate: true };
+    }
+    if (!priorClass?.task || priorClass.task === 'context_clarify' || priorClass.task === 'why_clarify') {
+      return { strategy: 'Describe', task: null };
+    }
+    if (priorClass.projectIds?.length >= 2) {
+      return { strategy: 'Summarize', task: 'why_clarify', comparisonElaboration: true };
+    }
+    // The overview is not one facet. Offer documented facets instead of
+    // reading that overview again. A project switch already spoke the
+    // purpose facet, so it stays on the normal elaboration path.
+    if (priorClass.task === 'project_overview') {
+      const projectId = boundId && DETAIL_TASK[boundId] ? boundId : null;
+      if (!projectId) return { strategy: 'Summarize', task: 'why_clarify' };
+      return {
+        strategy: 'Summarize',
+        task: DETAIL_TASK[projectId],
+        focus: ASPECT_FOCUS[projectId].switch,
+        elaborate: true,
+        facetMenu: true,
+        priorQuery: prior,
+      };
+    }
+    return { ...priorClass, elaborate: true, priorQuery: prior };
+  }
+
+  // A bare "Why?" after a ranking or authorship answer stays on that answer.
+  // It does not adopt a visible card or invent the choice the records omit.
+  if (!ctx.resolvingPrior && /^(?:and )?why$/.test(followUpRemainder(query).replace(/[^a-z0-9]+/g, ' ').trim())) {
+    const priorWhy = priorSubstantiveVisitorQuery(mem, query);
+    if (priorWhy) {
+      const priorWhyClass = classifyReasoningStrategy(priorWhy, {
+        ...ctx,
+        resolvingPrior: true,
+        memory: mem,
+        questionFrame: buildQuestionFrame(priorWhy, { memory: mem }),
+      });
+      if (['keep_two', 'best_engineering', 'justify_best_project', 'why_hire', 'demo_ai', 'engineer_type', 'arch_why'].includes(priorWhyClass?.task)) {
+        return { ...priorWhyClass, elaborate: true, priorQuery: priorWhy };
+      }
+    }
+  }
+
   // Comparison context keeps the project set. A later "Which one?" / "Why?" / "What model?"
   // must not collapse onto a single lastProject.
   {
@@ -900,7 +1856,18 @@ export function classifyReasoningStrategy(query, ctx = {}) {
         projectIds: crossFollow.ids,
         lens: crossFollow.lens,
         priorLens: crossFollow.priorLens,
+        subject: crossFollow.subject || null,
+        concept: crossFollow.concept || null,
       };
+    }
+  }
+
+  // A pending project is still unresolved. A short how, or "what about
+  // the architecture", must not be answered from the visible card.
+  {
+    const pending = pendingProjectCommitment(ctx);
+    if (pending && namedCrossProjectIds(t).length === 0 && isSubjectHowFollowUp(query)) {
+      return { strategy: 'Summarize', task: 'context_clarify', aspect: pending.aspect || null };
     }
   }
 
@@ -910,13 +1877,57 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     const ppBound = boundId === 'placementpro' || /placement/i.test(String(boundId));
     const rrBound = boundId === 'reporadar' || /reporadar/i.test(String(boundId));
 
-    // Bare "Why?" has no documented motive. A bound project makes the
-    // referent the previous answer; the records still do not establish a reason.
-    if (/^(?:and )?why\??$/i.test(t)) {
+    // Enrichment appends the project name, so match the remainder.
+    // A bare "Why?" refers to the previous answer. The records do not
+    // establish that motive, and the purpose overview is not a reason.
+    const core = followUpRemainder(query);
+    if (/^(?:and )?why\??$/.test(core) || /^why does (?:it|that|this) work(?: that way)?\??$/.test(core)) {
       if (qfBound) return { strategy: 'Summarize', task: 'queryforge_unknown' };
       if (ppBound) return { strategy: 'Summarize', task: 'placementpro_unknown' };
       if (rrBound) return { strategy: 'Summarize', task: 'reporadar_unknown' };
       return { strategy: 'Summarize', task: 'why_clarify' };
+    }
+    // "Explain that" asks to continue the previous answer, but not which
+    // part. Ask, and leave the bound project in place.
+    if (/^(?:explain that|what about that|what does that mean)\??\.?$/.test(core)) {
+      return { strategy: 'Summarize', task: 'why_clarify' };
+    }
+    // "How?" continues the previous subject. The generic flow facet is only
+    // the mechanism of a project overview, not of a database or score.
+    if (!ctx.resolvingPrior && isSubjectHowFollowUp(query)) {
+      const prior = priorSubstantiveVisitorQuery(mem, query);
+      if (prior) {
+        const priorClass = classifyReasoningStrategy(prior, {
+          ...ctx,
+          resolvingPrior: true,
+          memory: mem,
+          questionFrame: buildQuestionFrame(prior, { memory: mem, focusProject: boundId }),
+        });
+        const priorTask = priorClass?.task || '';
+        if (priorClass?.projectIds?.length >= 2) {
+          return {
+            strategy: 'Compare',
+            task: 'cross_project_compare',
+            projectIds: priorClass.projectIds,
+            lens: priorClass.lens || 'differentiate',
+            priorLens: priorClass.lens || null,
+            subject: priorClass.subject || null,
+            elaborate: priorClass.lens === 'subject',
+          };
+        }
+        if (/_unknown$/.test(priorTask)) {
+          return { ...priorClass, elaborate: true, priorQuery: prior };
+        }
+        if (priorClass?.focus && /_detail$/.test(priorTask) && priorClass.aspect !== 'switch') {
+          return { ...priorClass, elaborate: true, priorQuery: prior };
+        }
+        if (priorTask === 'project_overview' || priorClass?.aspect === 'switch') {
+          const flow = ASPECT_FOCUS[boundId]?.flow;
+          if (flow) {
+            return { strategy: 'Summarize', task: DETAIL_TASK[boundId], focus: flow, aspect: 'flow' };
+          }
+        }
+      }
     }
 
     // QueryForgeAI: stay on CODE-PROVEN facets — never generic five-layer arch_why
@@ -927,6 +1938,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
       }
       if (isBackendAspectQuery(t)) {
         return { strategy: 'Summarize', task: 'queryforge_detail', focus: 'qf-architecture', aspect: 'stack' };
+      }
+      if (isFrontendAspectQuery(t)) {
+        return { strategy: 'Summarize', task: 'queryforge_detail', focus: 'qf-architecture', aspect: 'frontend' };
       }
       if (/hardest/i.test(t)) {
         return { strategy: 'Explain', task: 'probe_hardest' };
@@ -962,6 +1976,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
       }
       if (isBackendAspectQuery(t)) {
         return { strategy: 'Summarize', task: 'placementpro_detail', focus: 'pp-architecture', aspect: 'stack' };
+      }
+      if (isFrontendAspectQuery(t)) {
+        return { strategy: 'Summarize', task: 'placementpro_detail', focus: 'pp-architecture', aspect: 'frontend' };
       }
       if (/hardest/i.test(t)) {
         return { strategy: 'Summarize', task: 'placementpro_unknown' };
@@ -1001,6 +2018,9 @@ export function classifyReasoningStrategy(query, ctx = {}) {
       }
       if (isBackendAspectQuery(t)) {
         return { strategy: 'Summarize', task: 'reporadar_detail', focus: 'rr-architecture', aspect: 'stack' };
+      }
+      if (isFrontendAspectQuery(t)) {
+        return { strategy: 'Summarize', task: 'reporadar_detail', focus: 'rr-architecture', aspect: 'frontend' };
       }
       if (/hardest/i.test(t)) {
         return { strategy: 'Summarize', task: 'reporadar_unknown' };
@@ -1068,7 +2088,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (/don'?t know|something you don'?t know|what (don'?t|do not) you know|what is something you don'?t/i.test(t)) {
     return { strategy: 'Summarize', task: 'honest_unknown' };
   }
-  if (/what kind of engineer|what type of engineer|what engineer is he|what does (he|sudhanshu) (actually )?specialize|specialize in|speciali[sz]ation/i.test(t)) {
+  if (/what kind of engineer|what type of engineer|what engineer is he|what does (he|sudhanshu) (actually )?specialize|specialize in|speciali[sz]ation|backend-leaning/i.test(t)) {
     return { strategy: 'Summarize', task: 'engineer_type' };
   }
   if (/who are you\b|what are you\b|are you (an? )?(ai|assistant|bot|chatgpt)\b/i.test(t)
@@ -1107,7 +2127,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (/strongest engineering decision|best engineering decision/i.test(t)) {
     return { strategy: 'Justify', task: 'strongest_decision' };
   }
-  if (/why (should i )?hire|why hire/i.test(t)) {
+  if (/why (should (?:i|we|you) )?hire|why hire/i.test(t)) {
     return { strategy: 'Justify', task: 'why_hire' };
   }
 
@@ -1185,6 +2205,8 @@ export function classifyReasoningStrategy(query, ctx = {}) {
         projectIds: cross.ids,
         lens: cross.lens,
         priorLens: cross.priorLens,
+        subject: cross.subject || null,
+        concept: cross.concept || null,
       };
     }
   }
@@ -1200,6 +2222,67 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   {
     const pendingChoice = routePendingProjectChoice(t, ctx);
     if (pendingChoice) return pendingChoice;
+  }
+
+  // A move that only names the next project, with no new question.
+  // Pending clarification is handled above so it keeps its aspect.
+  {
+    const choice = bareProjectChoice(t);
+    if (choice && !pendingProjectCommitment(ctx)) {
+      return {
+        strategy: 'Summarize',
+        task: DETAIL_TASK[choice],
+        focus: ASPECT_FOCUS[choice].switch,
+        aspect: 'switch',
+      };
+    }
+  }
+
+  // Naming a project inside a story is not a selection. Keep a pending
+  // clarification, and do not replace an established project or comparison.
+  if (isIncidentalProjectMention(t)) {
+    const pending = pendingProjectCommitment(ctx);
+    if (pending) {
+      return { strategy: 'Summarize', task: 'context_clarify', aspect: pending.aspect || null };
+    }
+    return { strategy: 'Describe', task: null };
+  }
+
+  // "That one" / "the second one" during a clarification has no project to
+  // bind, and the visible card is not that project.
+  {
+    const pending = pendingProjectCommitment(ctx);
+    if (pending && isUnresolvedProjectPointer(t)) {
+      return { strategy: 'Summarize', task: 'context_clarify', aspect: pending.aspect || null };
+    }
+  }
+
+  // "Is JavaScript listed in Placement Pro+'s stack?" is list membership.
+  // A stack facet title or cue must not turn that into the architecture writeup.
+  {
+    const namedTechProjects = namedCrossProjectIds(t);
+    const explicitTech = matchAnswerTechNames(query);
+    const asksList = /\bstack\b/.test(t) && /\b(?:listed|list|include|includes|including)\b/.test(t);
+    if (namedTechProjects.length === 1 && explicitTech.length === 1 && asksList && isPortfolioOrProjectStackName(explicitTech[0])) {
+      return {
+        strategy: 'Summarize',
+        task: 'project_stack_evidence',
+        projectId: namedTechProjects[0],
+        technology: explicitTech[0],
+        asksList: true,
+      };
+    }
+  }
+
+  // Authentication and API errors are not the generic API surface.
+  // A full facet title wins over a cue word that happens to sit inside it.
+  {
+    const authentication = routeAuthenticationAsk(t, ctx);
+    if (authentication) return authentication;
+    const apiFailure = routeApiFailureAsk(t, ctx);
+    if (apiFailure) return apiFailure;
+    const titled = routeTitledFacet(t, ctx);
+    if (titled) return titled;
   }
 
   // QueryForge CODE-PROVEN facets / explicit unknowns — before generic why_* only when
@@ -1284,6 +2367,77 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     return { strategy: 'Summarize', task: 'reporadar_detail', focus: 'rr-ai-model', secondary: 'rr-ingestion' };
   }
 
+  // "Is JavaScript listed in Placement Pro+'s stack?" is list membership.
+  // A generic stack facet must not answer that as the architecture writeup.
+  {
+    const namedTechProjects = namedCrossProjectIds(t);
+    const explicitTech = matchAnswerTechNames(query);
+    const asksList = /\bstack\b/.test(t) && /\b(?:listed|list|include|includes|including)\b/.test(t);
+    if (namedTechProjects.length === 1 && explicitTech.length === 1 && asksList && isPortfolioOrProjectStackName(explicitTech[0])) {
+      return {
+        strategy: 'Summarize',
+        task: 'project_stack_evidence',
+        projectId: namedTechProjects[0],
+        technology: explicitTech[0],
+        asksList: true,
+      };
+    }
+  }
+
+  // A named facet title, or a bound database/architecture question that
+  // never repeated the project name, is not an unknown.
+  {
+    const explicitFacet = routeExplicitFacet(t, ctx);
+    if (explicitFacet) return explicitFacet;
+  }
+
+  // An explicit technology name stays on the project facet that documents it.
+  // "Does Placement Pro+ use PostgreSQL?" is that project's database record,
+  // not a portfolio-wide proficiency claim and not an empty gap.
+  // When no facet documents the name, a project stack list is still answerable
+  // as list membership. It is not implementation or proficiency.
+  {
+    const namedTechProjects = namedCrossProjectIds(t);
+    const explicitTech = matchAnswerTechNames(query);
+    if (namedTechProjects.length === 1 && explicitTech.length === 1) {
+      const facet = facetForNamedTechnology(namedTechProjects[0], explicitTech[0]);
+      if (facet && DETAIL_TASK[namedTechProjects[0]]) {
+        return { strategy: 'Summarize', task: DETAIL_TASK[namedTechProjects[0]], focus: facet.id };
+      }
+      const asksList = /\bstack\b/.test(t) && /\b(?:listed|list|include|includes|including)\b/.test(t);
+      const asksUse = /\b(?:use|uses|using|built with)\b/.test(t);
+      if ((asksList || asksUse) && isPortfolioOrProjectStackName(explicitTech[0])) {
+        return {
+          strategy: 'Summarize',
+          task: 'project_stack_evidence',
+          projectId: namedTechProjects[0],
+          technology: explicitTech[0],
+          asksList,
+        };
+      }
+    }
+  }
+
+  // A related wording such as "ecmascript" or "gcp" is not the canonical name.
+  // Keep the named project, and do not rename the wording.
+  {
+    const namedTechProjects = namedCrossProjectIds(t);
+    const described = matchAnswerTechNames(query).length ? [] : matchDescriptiveAliases(query);
+    if (namedTechProjects.length === 1 && described.length === 1) {
+      const asksList = /\bstack\b/.test(t) && /\b(?:listed|list|include|includes|including)\b/.test(t);
+      const asksUse = /\b(?:use|uses|using|built with)\b/.test(t);
+      if (asksList || asksUse) {
+        return {
+          strategy: 'Summarize',
+          task: 'project_alias_record',
+          projectId: namedTechProjects[0],
+          alias: described[0].label,
+          asksList,
+        };
+      }
+    }
+  }
+
   // Engineering-detail without a facet, or a specific property the records do not cover.
   if (isEngineeringDetailQuery(t) || isSpecificUndocumentedProjectAsk(t) || isUnsupportedTechnologyAsk(t)) {
     return { strategy: 'Summarize', task: 'undocumented_detail' };
@@ -1295,7 +2449,8 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   }
 
   if ((/how (was|is|did) .{0,40}(built|designed|architect)/i.test(t)
-    || (/how (was|is) .+ built/i.test(t) && /queryforge|reporadar|placement/i.test(t)))
+    || (/how (was|is) .+ built/i.test(t) && /queryforge|reporadar|placement/i.test(t))
+    || /did (?:you|he|sudhanshu) design|who designed|(?:five-layer|architecture) (?:diagram|authorship)|design(?:ed)? the (?:five-layer|architecture)/i.test(t))
     && namedCrossProjectIds(t).length === 0) {
     return { strategy: 'Explain', task: 'arch_why' };
   }
@@ -1346,10 +2501,15 @@ export function classifyReasoningStrategy(query, ctx = {}) {
     const switched = namedCrossProjectIds(t);
     if (switched.length === 1) {
       const id = switched[0];
-      if (isDatabaseAspectQuery(t) && ASPECT_FOCUS[id].database) {
-        return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].database, aspect: 'database' };
+      const explicitFacet = routeExplicitFacet(t, ctx);
+      if (explicitFacet) return explicitFacet;
+      const core = followUpRemainder(t).replace(/[^a-z0-9]+/g, ' ').trim();
+      // "What about Placement Pro+" chooses that project. "What about
+      // Kubernetes?" does not become its purpose overview.
+      if (/^what about(?: it| that| this| the project)?$/.test(core)) {
+        return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].switch, aspect: 'switch' };
       }
-      return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].switch, aspect: 'switch' };
+      return { strategy: 'Summarize', task: 'undocumented_detail' };
     }
   }
 
@@ -1367,6 +2527,10 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   }
 
   // Supported project questions whose plan would otherwise be an empty DirectAnswer.
+  // A behavior the named project does not document is not its purpose overview.
+  if (flowIds.length === 1 && documentedConceptInQuery(t) && !conceptFacetSentences(flowIds[0], documentedConceptInQuery(t)).length) {
+    return { strategy: 'Summarize', task: 'undocumented_detail' };
+  }
   if (flowIds.length === 1 && (qType === 'ProjectExplanation' || qType === 'ArchitectureExplanation')) {
     const id = flowIds[0];
     return { strategy: 'Summarize', task: DETAIL_TASK[id], focus: ASPECT_FOCUS[id].switch, aspect: 'switch' };
@@ -1376,6 +2540,16 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (!boundId && namedCrossProjectIds(t).length === 0 && (isBackendAspectQuery(t) || isDatabaseAspectQuery(t) || isFrontendAspectQuery(t))) {
     const aspect = isDatabaseAspectQuery(t) ? 'database' : isBackendAspectQuery(t) ? 'backend' : 'frontend';
     return { strategy: 'Summarize', task: 'context_clarify', aspect };
+  }
+
+  const architectureRoute = routeUnscopedArchitectureAsk(t, ctx);
+  if (architectureRoute) return architectureRoute;
+
+  const concept = documentedConceptInQuery(t);
+  const asksWhichTools = /\b(?:what|which)\b/i.test(t)
+    && /\b(?:tool|tools|strateg|approach|used|use)\b/i.test(t);
+  if (concept && namedCrossProjectIds(t).length === 0 && asksWhichTools) {
+    return { strategy: 'Describe', task: 'concept_record', concept };
   }
 
   return { strategy: 'Describe', task: null };
@@ -1487,6 +2661,10 @@ export function formatDecisionFirst({ conclusion, reasoning, evidence }) {
 
 function nm(p) {
   return p ? `**${p.name}**` : 'a shipped project';
+}
+
+function stillRecord(ctx) {
+  return ctx?.classification?.elaborate ? 'That is still the record. ' : '';
 }
 
 function speak(strategy, conclusion, reasoning, evidence) {
@@ -1771,45 +2949,42 @@ function opConversationMode(ctx, { task }) {
 
 /** Infer fit from identity + patterns. */
 function opInfer(ctx, { task }) {
-  const prefs = getIdentityClaimsByFacet('architecturalPrefs', ctx.identity);
   const patterns = getIdentityClaimsByFacet('commonPatterns', ctx.identity);
   const subject = ctx.identity.subject;
   const live = patterns.find((c) => /live URL/i.test(c.statement));
-  const backend = prefs.find((c) => /python|backend/i.test(c.statement));
-  const ai = prefs.find((c) => /applied AI|LLMs/i.test(c.statement));
   const pp = ctx.byId('placementpro');
 
   if (task === 'startup_fit') {
-    return speak(
-      ctx.strategy,
-      `Yes — I'd fit a startup that needs someone to ship backend + applied AI end to end.`,
-      `Startups reward ownership and speed-to-live. ${live?.statement || 'I ship multiple production AI products with live URLs.'}`,
-      `I wouldn't pitch myself as the *only* hire for pure mobile, deep ML research, or infra-only SRE — that isn't what this portfolio shows.`,
-    );
+    return [
+      'The records do not establish whether Sudhanshu would fit a startup. I will not infer personal fit from the projects.',
+      live?.statement
+        ? `${live.statement} That is a deployment fact, not a hiring-fit conclusion.`
+        : 'The records do not document a startup-fit decision.',
+      'The portfolio does not document mobile, deep ML research, or infra-only SRE work. That absence is not a measured fit score.',
+    ].join(' ');
   }
   if (task === 'backend_team_fit') {
-    return speak(
-      ctx.strategy,
-      `Yes — a backend / platform team is a natural fit for me.`,
-      `My center of gravity is Python services, REST APIs, and AI orchestration with the backend owning correctness.`,
-      `Frontend is real and shipped, but secondary to ${subject?.title || 'the backend-leaning title'}.`,
-    );
+    const title = subject?.title || 'the documented role title';
+    return [
+      'The records do not establish whether Sudhanshu would fit a backend team. I will not infer personal fit from the stack.',
+      `The documented role title is ${title}. That is a role label, not a team-fit conclusion.`,
+      'Backend stack membership includes Flask, FastAPI, and REST APIs. Project records document FastAPI on QueryForgeAI, Flask on Placement Pro+, and a Next.js route on RepoRadarAI. Those are implementation facts. The records do not turn them into a team-fit conclusion.',
+    ].join(' ');
   }
   if (task === 'product_oriented') {
-    return speak(
-      ctx.strategy,
-      `I'm product-capable, with engineering as the primary identity.`,
-      `${nm(pp)} especially shows product workflow thinking (structured profile → graph gaps → template roadmap). Overall I read as an engineer who ships products — not a PM who codes.`,
-      `Hire me to build the system; treat product judgment as a bonus, not the main signal.`,
-    );
+    return [
+      'The records do not establish whether Sudhanshu is more product-oriented than engineering-oriented. I will not infer that identity from a project workflow.',
+      `${nm(pp)} documents a student workflow: a structured profile, skill-gap analysis, and a deterministic roadmap. That is product behavior in the project record, not a personal product-preference or proficiency claim.`,
+    ].join(' ');
   }
   if (task === 'best_role') {
-    return speak(
-      ctx.strategy,
-      `Best fit for me: Python backend / AI platform / full-stack product engineer roles where shipping matters.`,
-      `I'm especially strong on API design, LLM orchestration grounded in real data, and honest architecture.`,
-      `Less ideal as a first hire for pure mobile, deep ML research, or infra-only SRE.`,
-    );
+    const title = subject?.title || 'the documented role title';
+    return [
+      'The records do not name a best role, and they do not establish personal strength at API design or LLM orchestration. I will not invent that ranking.',
+      `The documented role title is ${title}. That is a role label.`,
+      'Project records document HTTP API surfaces and model use: QueryForgeAI uses POST /generate-sql, Placement Pro+ uses Flask blueprints under /api, and RepoRadarAI does not use a generative model. Those are implementation facts, not a strength ranking.',
+      'The portfolio does not document pure mobile, deep ML research, or infra-only SRE as a role.',
+    ].join(' ');
   }
   return null;
 }
@@ -1832,65 +3007,40 @@ function opExplain(ctx, { task }) {
       why_react: 'React',
       why_postgres: 'PostgreSQL',
     }[task];
-    const decs = getDecisionsForTechnology(tech, ctx.graph);
     const projectsUsing = ctx.profiles.filter((p) => (p.project.stack || []).includes(tech));
-    const pref = getIdentityClaimsByFacet('architecturalPrefs', ctx.identity)
-      .find((c) => new RegExp(tech, 'i').test(c.statement))
-      || getIdentityClaimsByFacet('technologyPrefs', ctx.identity)
-        .find((c) => new RegExp(tech, 'i').test(c.statement));
-    const sample = decs[0];
-    const trade = sample?.tradeoffs?.[0];
 
     if (task === 'why_postgres') {
-      const dataTechs = getNodesByType(ctx.graph, 'Technology')
-        .filter((t) => /postgres|mongo/i.test(t.label))
-        .map((t) => `\`${t.label}\``);
-      const pick = topByAttribute(ctx.profiles, 'databases') || qf;
-      return speak(
-        ctx.strategy,
-        `I'd default to Postgres when relational integrity and schema-aware work matter — which is exactly ${nm(pick)}'s world.`,
-        `The interesting problem there is correctness against a real data model, not just storing documents.`,
-        `At the portfolio level I list ${dataTechs.join(' and ') || 'PostgreSQL and MongoDB'} as the data layer — I won't invent a single pinned vendor per project card when the cards are thinner.`,
-      );
+      return [
+        'I don\'t have a record of which database Sudhanshu is strongest with, and I don\'t have a decision record that selects Postgres as the default database. I will not invent either claim.',
+        'PostgreSQL and MongoDB are listed in the portfolio stack. That is stack membership, not personal proficiency, and not a production deployment.',
+        'Placement Pro+ documents SQLite by default and PostgreSQL when DATABASE_URL is set. Whether production actually uses Postgres is UNKNOWN.',
+        'QueryForgeAI documents postgresql as a dialect the user selects, not as QueryForgeAI\'s own database.',
+      ].join(' ');
     }
 
-    // Storytelling openings — lived-in tech choices, no internal decision IDs
-    let conclusion;
-    if (task === 'why_flask') {
-      conclusion = `I chose Flask on ${projectsUsing.map(nm).join(' and ') || 'the Flask-based ships'} because I wanted a smaller surface and explicit control over the request lifecycle while wiring backend + AI together.`;
-    } else if (task === 'why_fastapi') {
-      conclusion = `I reached for FastAPI on ${projectsUsing.map(nm).join(' and ') || nm(qf)} because those API-first Python services needed async I/O more than a minimal sync surface.`;
-    } else {
-      conclusion = `I built the UIs in React — especially on ${projectsUsing.map(nm).join(' and ') || 'the React ships'} — because that's the ecosystem I actually shipped in.`;
-    }
-
-    const reasoning = pref?.statement
-      || (trade
-        ? `The interesting trade-off was ${trade.dimension.toLowerCase()}: ${trade.chosenView}`
-        : (sample?.rawText || `I considered the alternatives, but ${tech} is what ended up on the shipped stack cards.`));
-
-    const altTechs = (sample?.alternatives || [])
-      .map((a) => a.tech)
-      .filter(Boolean);
-    const evidence = [
-      projectsUsing.length ? `You'll see \`${tech}\` on ${projectsUsing.map(nm).join(' and ')}.` : '',
-      altTechs.length
-        ? `I can see why someone would choose ${altTechs.join(' or ')} instead — I just didn't on these ships.`
-        : '',
-    ].filter(Boolean).join(' ');
-
-    return speak(ctx.strategy, conclusion, reasoning, evidence || `It's evidenced on the shipped stack — not a slide-deck preference.`);
+    const listed = projectsUsing.map(nm).join(' and ') || 'no project stack';
+    const recorded = {
+      why_flask: 'Placement Pro+ lists Flask on its project stack, and the knowledge record documents Flask. No decision record states a personal preference for Flask or a motive for choosing it.',
+      why_fastapi: 'QueryForgeAI\'s decision record says the cloud backend is FastAPI + Uvicorn on Render. That is a recorded configuration. It does not state a personal preference or a motive.',
+      why_react: 'QueryForgeAI\'s decision record says the cloud frontend is React on Netlify. Placement Pro+ and RepoRadarAI list React on their project stacks. Those are list and configuration facts, not a personal preference.',
+    }[task];
+    return [
+      `The records do not establish a personal preference for ${tech}. I will not invent a motive.`,
+      `${tech} appears as stack membership on ${listed}. A stack entry is not a preference.`,
+      recorded,
+    ].join(' ');
   }
 
   if (task === 'arch_why') {
     const path = layers.map((l) => `**${l.label}** (${l.props.sub})`).join(' → ');
-    const principles = getIdentityClaimsByFacet('designPrinciples', ctx.identity);
+    const topology = getIdentityClaimsByFacet('designPrinciples', ctx.identity)
+      .find((c) => /layered topology/i.test(c.statement));
     return [
-      `I designed the architecture as a deliberate five-layer split: ${path}.`,
-      principles[0]?.statement
-        || 'The problem I wanted to solve was clear ownership — frontend over REST, backend for correctness, AI reasoning over real data.',
-      `That five-layer split is the portfolio teaching diagram. It is not a claim that ${ctx.profiles.map(nm).join(', ')} share one inspected runtime.`,
-    ].join('\n\n');
+      `${stillRecord(ctx)}The records do not establish that Sudhanshu personally designed the five-layer diagram. I will not claim authorship. The portfolio teaching diagram is a five-layer summary: ${path}.`,
+      topology?.statement
+        ? `The diagram description says: ${topology.statement} That sentence describes the diagram. It is not a record of personal authorship. It is not a finding that ${ctx.profiles.map(nm).join(', ')} share one inspected runtime. QueryForgeAI documents a FastAPI backend. Placement Pro+ documents Flask. RepoRadarAI documents a Next.js app.`
+        : `It is not a finding that ${ctx.profiles.map(nm).join(', ')} share one inspected runtime. QueryForgeAI documents a FastAPI backend. Placement Pro+ documents Flask. RepoRadarAI documents a Next.js app.`,
+    ].filter(Boolean).join('\n\n');
   }
 
   if (task === 'arch_tradeoffs') {
@@ -1946,9 +3096,9 @@ function opSummarize(ctx, { task }) {
     // Describe Sudhanshu briefly — answer the ask, no contact/nav dump
     if (/sudhanshu|30.?second|60.?second|elevator|describe/i.test(q)) {
       return [
-        `Sudhanshu is a backend-first engineer who likes turning messy real-world problems into intelligent software.`,
-        `Python is usually his backend spine, but he works across AI, APIs, databases, and the frontend when the product needs it.`,
-        `His projects are less about showcasing technologies and more about making those technologies work together to solve something real — ${ctx.profiles.map(nm).join(', ')} are the live proof.`,
+        `Sudhanshu Sinha's documented role title is ${ctx.identity.subject?.title || 'Python Backend Engineer · AI Developer · Full-Stack Engineer'}. That is a role label, not a specialization finding.`,
+        'The records do not establish a backend-leaning specialization from that title.',
+        `The shipped projects are ${ctx.profiles.map(nm).join(', ')}. Each has a public live URL. That is a deployment fact.`,
       ].join(' ');
     }
     return [
@@ -1959,12 +3109,11 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'beyond_resume') {
-    const lean = prefs.find((c) => /backend-leaning|full-stack|Python/i.test(c.statement));
     const ai = philosophy.find((c) => /reasoning layer/i.test(c.statement));
     const ship = philosophy.find((c) => /Ship working production|slideware/i.test(c.statement));
     return [
-      `Beyond a resume line, Sudhanshu is the kind of engineer who thinks in systems — not feature checklists.`,
-      `${lean?.statement || 'Center of gravity: Python backend + applied AI, with enough frontend to finish the product.'}`,
+      `Beyond a resume line, the documented role title is ${subject?.title || 'Python Backend Engineer · AI Developer · Full-Stack Engineer'}. That is a role label, not a specialization finding.`,
+      'The records do not establish a backend-leaning specialization. I will not infer one from the role title or the stack.',
       `${ai?.statement || 'AI shows up as a reasoning layer over real inputs — schemas, resumes, repositories — not as decoration.'}`,
       `${ship?.statement || 'The portfolio bias is toward shipping live products you can click, not slideware.'}`,
       `What makes the work interesting is that each product solves a concrete mess (SQL pain, placement prep chaos, opaque repos) with its own architecture.`,
@@ -1996,7 +3145,7 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'undocumented_detail') {
-    const q = String(ctx.query || '').toLowerCase();
+    const q = String((ctx.classification?.elaborate && ctx.classification?.priorQuery) || ctx.query || '').toLowerCase();
     const pick = /reporadar/i.test(q) ? ctx.byId('reporadar')
       : /placement/i.test(q) ? ctx.byId('placementpro')
         : /queryforge/i.test(q) ? ctx.byId('queryforge')
@@ -2009,6 +3158,7 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'queryforge_detail' || task === 'queryforge_unknown') {
+    if (ctx.classification?.elaborate) return speakStoredElaboration(task, ctx);
     const focusedId = ctx.classification?.focus;
     const facet = (focusedId && QUERYFORGE_FACETS.find((f) => f.id === focusedId))
       || matchQueryForgeFacet(ctx.query);
@@ -2028,6 +3178,7 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'placementpro_detail' || task === 'placementpro_unknown') {
+    if (ctx.classification?.elaborate) return speakStoredElaboration(task, ctx);
     const focusedId = ctx.classification?.focus;
     const facet = (focusedId && PLACEMENTPRO_FACETS.find((f) => f.id === focusedId))
       || matchPlacementProFacet(ctx.query);
@@ -2051,6 +3202,7 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'reporadar_detail' || task === 'reporadar_unknown') {
+    if (ctx.classification?.elaborate) return speakStoredElaboration(task, ctx);
     const q = String(ctx.query || '');
     const secondaryId = ctx.classification?.secondary;
     if (secondaryId || (/\b(llm|model|generative)\b/i.test(q) && /\b(source|clone|\bast\b|files?)\b/i.test(q))) {
@@ -2125,9 +3277,8 @@ function opSummarize(ctx, { task }) {
   if (task === 'about_sudhanshu') {
     return [
       `${subject?.name || 'Sudhanshu Sinha'} is a ${subject?.title || 'software engineer'}. ${subject?.tagline || ''}`.trim(),
-      `He ships intelligent systems end to end: ${ctx.profiles.map(nm).join(', ')} — all live, each with its own architecture.`,
-      prefs.find((c) => /backend-leaning|Python/i.test(c.statement))?.statement
-        || 'Center of gravity: Python backend + applied AI, with enough frontend to finish the product.',
+      `The shipped projects are ${ctx.profiles.map(nm).join(', ')}. Each has a public live URL. That is a deployment fact, not a specialization finding.`,
+      'The records do not establish a backend-leaning specialization. I will not infer one from the role title or the stack.',
     ].join('\n\n');
   }
 
@@ -2150,12 +3301,9 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'engineer_type') {
-    const lean = prefs.find((c) => /backend-leaning|full-stack/i.test(c.statement));
     return [
-      `Sudhanshu specializes as a backend-leaning full-stack engineer with applied AI as a product skill — matching ${subject?.title || 'his documented title'}.`,
-      lean?.statement || 'Python/AI core with React (or JS) surfaces where the product needs a serious UI.',
-      `He builds Python services, wires AI into real workflows, and ships the UI when the product needs it — evidenced across ${ctx.profiles.map(nm).join(', ')}.`,
-    ].join('\n\n');
+      `${stillRecord(ctx)}The records do not establish a specialization beyond the documented role title. I will not infer a backend-leaning specialty from the stack. The documented role title is ${subject?.title || 'Python Backend Engineer · AI Developer · Full-Stack Engineer'}. That is a role label, not a proficiency measurement. Backend stack membership includes Flask, FastAPI, and REST APIs. Frontend stack membership includes React, Next.js, Zustand, and TailwindCSS. Membership is not proficiency. Project records document FastAPI on QueryForgeAI, Flask on Placement Pro+, and a Next.js route on RepoRadarAI.`,
+    ].filter(Boolean).join('\n\n');
   }
 
   if (task === 'strengths') {
@@ -2171,35 +3319,26 @@ function opSummarize(ctx, { task }) {
 /** Justify hire / decisions from identity + recommend operator. */
 function opJustify(ctx, { task }) {
   if (task === 'justify_best_project' || task === 'best_engineering') {
-    return opRank(ctx, {
-      weights: TASK_OBJECTIVES.best_engineering,
-      conclusionLead: (pick) => `I'd choose ${nm(pick)}.`,
-      whyLead: (pick) => `It shows the strongest software engineering in one place — backend architecture, SQL optimization, AI grounded in a real schema, and production deployment.`,
-      evidenceLead: (pick, rest) => `${rest.map(nm).join(' and ')} remain strong on split-stack and product workflow — but ${pick?.name} is the deepest systems story.`,
-    });
+    return [
+      `${stillRecord(ctx)}The records do not establish which project shows the best or strongest software engineering. I will not choose one. QueryForgeAI documents FastAPI, schema-aware SQL generation, and a public live URL. Placement Pro+ documents Flask, a structured profile, and a deterministic roadmap. RepoRadarAI documents a Next.js app, GET /api/analyze, and a public repository. Those are implementation and deployment facts, not a ranking.`,
+    ].filter(Boolean).join('\n\n');
   }
 
   if (task === 'strongest_decision') {
     const phil = getIdentityClaimsByFacet('philosophy', ctx.identity)
       .find((c) => /reasoning layer/i.test(c.statement));
-    return speak(
-      ctx.strategy,
-      `The strongest engineering decision I made is treating AI as a reasoning layer over real data — not a blind text generator.`,
+    return [
+      'The records do not rank one engineering decision as the strongest. I will not invent that ranking.',
       phil?.statement
-        || 'That shows up in schema-aware SQL work, resume-anchored advice, and layered repo intelligence.',
-      `It keeps products useful and keeps the architecture honest.`,
-    );
+        ? `The portfolio summary describes this theme: ${phil.statement} That summary is not a decision record that names the theme the strongest decision, and it is not a proficiency claim.`
+        : 'No decision record names a strongest decision.',
+    ].join(' ');
   }
 
   if (task === 'why_hire') {
-    const rr = ctx.byId('reporadar');
-    const qf = ctx.byId('queryforge');
-    return speak(
-      ctx.strategy,
-      `Hire me because I ship real systems — three live AI products, not slideware.`,
-      `I think in backend correctness and applied AI: Python services, REST APIs, and an architecture where the model reasons over real data instead of inventing product behavior.`,
-      `Best proof: open ${nm(rr)} for the modern full-stack demo, then ${nm(qf)} if you care about data/AI rigor.`,
-    );
+    return [
+      `${stillRecord(ctx)}The records do not establish a personal hiring recommendation. I will not treat shipped work as proof of hiring merit. What they document: ${ctx.profiles.map(nm).join(', ')} each have a public live URL. That is a deployment fact. QueryForgeAI documents FastAPI and POST /generate-sql. Placement Pro+ documents Flask and a structured profile. RepoRadarAI documents GET /api/analyze and does not use a generative model.`,
+    ].filter(Boolean).join('\n\n');
   }
 
   if (task === 'followup_why_pick') {
@@ -2234,10 +3373,58 @@ function opJustify(ctx, { task }) {
    SYNTHESIZE — operator dispatcher (no project-id case tables)
    ============================================================ */
 
+const COMPARISON_EXPANSIONS = [
+  { lens: 'architecture', record: 'architecture', option: 'architecture' },
+  { lens: 'storage', record: 'database', option: 'the database' },
+  { lens: 'api', record: 'API', option: 'the API' },
+  { lens: 'model', record: 'model', option: 'what model each one uses' },
+];
+
+function joinComparisonOptions(options) {
+  if (options.length <= 1) return options[0] || '';
+  if (options.length === 2) return `${options[0]} or ${options[1]}`;
+  return `${options.slice(0, -1).join(', ')}, or ${options[options.length - 1]}`;
+}
+
+function comparisonLensPromptSpoken(memory) {
+  return (memory?.turns || []).some((turn) => (
+    turn.role === 'assistant' && /which of those should I expand\?/i.test(turn.text || '')
+  ));
+}
+
+function comparisonRecordSpoken(memory, record) {
+  const phrase = `that ${record} comparison is the full documented record`;
+  return (memory?.turns || []).some((turn) => (
+    turn.role === 'assistant' && String(turn.text || '').toLowerCase().includes(phrase)
+  ));
+}
+
+/**
+ * A repeated elaboration already has the lens question in the transcript.
+ * A selected lens is the commitment recorded when the visitor named one.
+ * Neither fact needs a new memory field.
+ */
+function speakComparisonElaboration(ctx) {
+  const chosen = COMPARISON_EXPANSIONS.find((item) => item.lens === ctx?.memory?.lastCommitment?.lens);
+  const memory = ctx?.memory;
+  if (chosen) {
+    const rest = COMPARISON_EXPANSIONS.filter((item) => item !== chosen).map((item) => item.option);
+    if (comparisonRecordSpoken(memory, chosen.record)) {
+      return `I will keep both projects. That choice is still open: ${joinComparisonOptions(rest)}. Which of those should I expand?`;
+    }
+    return `I will keep both projects. That ${chosen.record} comparison is the full documented record, and I will not invent a further difference. I can still expand ${joinComparisonOptions(rest)}. Which of those should I expand?`;
+  }
+  if (comparisonLensPromptSpoken(memory)) {
+    return 'I will keep both projects. That choice is still open: architecture, the database, the API, or what model each one uses. Which of those should I expand?';
+  }
+  return 'I will keep both projects. I can expand this comparison on architecture, the database, the API, or what model each one uses. Which of those should I expand?';
+}
+
 export function synthesizeReasoning(classification, query, ctx = {}) {
   const task = classification?.task;
   if (!task || task === 'compare_passthrough') return null;
   if (task === 'why_clarify') {
+    if (classification?.comparisonElaboration) return speakComparisonElaboration(ctx);
     return [
       'Which decision should I explain?',
       'Name the project, or say whether you mean why it exists, why the architecture is shaped that way, or why a technology was chosen.',
@@ -2247,6 +3434,19 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   if (task === 'context_clarify') {
     return 'Which project do you mean? QueryForgeAI, Placement Pro+, or RepoRadar?';
   }
+  if (task === 'tech_mention') return speakIncidentalTechnologyMention(query, ctx);
+  if (task === 'portfolio_history') {
+    return portfolioTechnologyNote(classification.subject, { elaborate: classification.elaborate === true });
+  }
+  if (task === 'stack_membership') {
+    return classification.inventory
+      ? speakStackInventory({ elaborate: classification.elaborate === true })
+      : speakStackMembership(classification.subject, { elaborate: classification.elaborate === true });
+  }
+  if (task === 'concept_record') return speakConceptRecord(classification);
+  if (task === 'concept_alias') return speakConceptAlias(classification);
+  if (task === 'project_stack_evidence') return speakProjectStackEvidence(classification);
+  if (task === 'project_alias_record') return speakProjectAliasRecord(classification);
 
   const graph = getEngineeringGraph();
   const records = getDecisionRecords(graph);
@@ -2330,13 +3530,9 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   }
 
   if (task === 'keep_two') {
-    return opRank(opCtx, {
-      weights: TASK_OBJECTIVES.keep_two,
-      keep: 2,
-      conclusionLead: (top) => `If I could only keep two, I'd keep ${nm(top[0])} and ${nm(top[1])}.`,
-      whyLead: () => `Together they cover the deepest engineering signal and the strongest full-stack/open-source signal — the pair a technical hiring loop can actually probe.`,
-      evidenceLead: (top, drop) => `I'd drop ${nm(drop[0])} last — it's a real shipped product, but it adds less unique engineering depth in a constrained portfolio.`,
-    });
+    return [
+      `${stillRecord(opCtx)}The records do not establish which two projects to keep or which one to drop. I will not rank them. QueryForgeAI documents FastAPI and schema-aware SQL generation. Placement Pro+ documents Flask, a structured profile, and a deterministic roadmap. RepoRadarAI documents a Next.js app, GET /api/analyze, and a public repository. Every portfolio project has a public live URL. Those are implementation and deployment facts, not an order.`,
+    ].filter(Boolean).join('\n\n');
   }
 
   if (task === 'best_engineering') {
@@ -2353,50 +3549,45 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   }
 
   if (task === 'demo_backend' || task === 'demo_ai' || task === 'demo_frontend') {
-    const weights = TASK_OBJECTIVES[task];
-    const ranked = rankByObjective(profiles, weights);
     if (task === 'demo_backend') {
-      return speak(strategy,
-        `Backend engineering shows up most clearly in ${nm(ranked[0])} and ${nm(ranked[1])}.`,
-        `Both center on Python services that own orchestration, APIs, and AI workflow control — the backend is the product brainstem, not a thin BFF.`,
-        `${nm(byId('reporadar'))} is a Next.js App Router service with Octokit GitHub REST — its story shares the spotlight with a TypeScript React surface, not a FastAPI core.`,
-      );
+      return [
+        'The records do not rank which project demonstrates the most backend engineering. I will not infer that ranking.',
+        'QueryForgeAI documents FastAPI. Placement Pro+ documents Flask. RepoRadarAI documents a Next.js route, GET /api/analyze, rather than a Python backend. Those are implementation facts, not a strength ranking.',
+      ].join(' ');
     }
     if (task === 'demo_ai') {
       const qf = byId('queryforge');
       const rr = byId('reporadar');
       const pp = byId('placementpro');
-      return speak(strategy,
-        `For AI engineering depth, I'd highlight ${nm(ranked[0])} first.`,
-        `The three ships show different intelligence muscles: schema-aware SQL generation (${nm(qf)}), GitHub-metadata health heuristics (${nm(rr)}), and MiniLM/graph skill-gap templates (${nm(pp)}) — not three copies of the same chat LLM.`,
-        `${nm(qf)} wins when "AI engineering" means grounding and correctness; ${nm(rr)} is a productized GitHub-stats surface, not an LLM over source.`,
-      );
+      return [
+        `${stillRecord(opCtx)}The records do not rank the projects by AI engineering and do not record a preference for which to highlight first. I will not invent that order. ${nm(qf)} documents schema-aware SQL generation. ${nm(rr)} documents GitHub-metadata health heuristics and does not use a generative model over source. ${nm(pp)} documents MiniLM and a skill graph for skill-gap templates. Those are different implementation records, not a ranking.`,
+      ].filter(Boolean).join('\n\n');
     }
-    return speak(strategy,
-      `Frontend craft shows strongest in ${nm(ranked[0])}${ranked[1] ? ` and ${nm(ranked[1])}` : ''}.`,
-      `React/TypeScript on RepoRadar and React on QueryForge are the clearest component-framework showcases.`,
-      `${nm(byId('placementpro'))} ships a distinctive terminal-style surface — strong product UX, less of a classic React showcase.`,
-    );
+    return [
+      'The records do not rank frontend craft or name a strongest frontend technology. I will not infer that ranking from the stack.',
+      `RepoRadarAI lists Next.js, React, and TypeScript. QueryForgeAI lists React and JavaScript. ${nm(byId('placementpro'))} lists React and TypeScript. Those are stack entries, not a proficiency ranking.`,
+    ].join(' ');
   }
 
   // --- Evaluate ---
   if (task === 'eval_rest_apis') {
-    const withRest = profiles.filter((p) => (p.project.stack || []).some((s) => /rest/i.test(s)));
-    return opEvaluate(opCtx, {
-      conclusion: `Yes — I can design REST APIs.`,
-      reasoning: `Confidence is high because REST isn't a single resume bullet — it's how my frontends talk to backends across the shipped systems.`,
-      evidence: `You'll see REST APIs on ${withRest.map(nm).join(', ') || 'the shipped projects'}. Python services use Flask or FastAPI; RepoRadarAI's analyze route is Next.js.`,
-    });
+    return [
+      'REST APIs is listed in the portfolio stack. That is stack membership. It is not a record of personal proficiency, and it is not a production-deployment finding.',
+      'QueryForgeAI, Placement Pro+, and RepoRadarAI list REST APIs on their project stacks. A list entry is not, by itself, a verified implementation.',
+      'The project records do document HTTP API surfaces: QueryForgeAI uses POST /generate-sql, Placement Pro+ uses Flask blueprints under /api, and RepoRadarAI serves GET /api/analyze. That is documented API behavior. It does not establish personal proficiency at designing REST APIs.',
+    ].join(' ');
   }
 
   if (task === 'backend_vs_frontend') {
     const back = getNodesByType(graph, 'Technology').filter((t) => t.props.group === 'back').map((t) => t.label);
     const front = getNodesByType(graph, 'Technology').filter((t) => t.props.group === 'front').map((t) => t.label);
-    return opEvaluate(opCtx, {
-      conclusion: `I'm stronger on the backend side.`,
-      reasoning: `All three production systems are built around Python services and APIs, with AI orchestration living in that backend layer. Frontend is real and shipped — but the center of gravity matches my title.`,
-      evidence: `Backend: ${back.map((n) => `\`${n}\``).join(', ')}. Frontend: ${front.map((n) => `\`${n}\``).join(', ')}. I'd call myself backend-leaning full-stack — not frontend-only.`,
-    });
+    const title = identity?.subject?.title || 'the documented role title';
+    return [
+      'The records do not establish whether Sudhanshu is stronger at backend or frontend, and they do not record a personal preference between them. I will not infer either claim from the stack.',
+      `The documented role title is ${title}. That is a role label, not a proficiency measurement.`,
+      `Backend stack membership includes ${back.join(', ') || 'the backend group'}. Frontend stack membership includes ${front.join(', ') || 'the frontend group'}. A stack entry is not a strength ranking.`,
+      'Project records document these implementations: QueryForgeAI\'s decision record says the cloud backend is FastAPI and the cloud frontend is React. Placement Pro+ lists Flask and React and documents Flask. RepoRadarAI\'s decision record says it ships as a Next.js app with GET /api/analyze. Those are implementation and list facts, not a finding that one side is stronger.',
+    ].join(' ');
   }
 
   if (task === 'docker_experience') {
@@ -2409,11 +3600,10 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
         evidence: deploy?.props.sub || 'Deploy tooling appears at the portfolio architecture level.',
       });
     }
-    const used = getEdges(graph, { from: docker.id, type: 'used_in' });
     return opEvaluate(opCtx, {
-      conclusion: `Yes — Docker is part of how I ship.`,
-      reasoning: `It's listed in the portfolio STACK${used.length ? ' and linked into shipped projects' : ' (portfolio-level; thinner per-project pins)'} and sits in the deployment layer alongside Vercel, Netlify, and Render. I won't claim years of ops tenure that aren't stated.`,
-      evidence: deploy?.props.desc || 'Containerized, reproducible deploys are part of the architecture model.',
+      conclusion: portfolioTechnologyNote('Docker'),
+      reasoning: '',
+      evidence: '',
     });
   }
 
@@ -2422,21 +3612,21 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   }
 
   if (task === 'scalable_backend') {
-    return opEvaluate(opCtx, {
-      conclusion: `Yes — within the scope of what I've actually shipped.`,
-      reasoning: `The shared pattern is a Python API layer, REST boundaries, an AI reasoning layer over real inputs, and deployable frontends — a solid foundation for scaling a service.`,
-      evidence: `I won't invent multi-region ops or Kafka-scale claims. Clear layer ownership is the honest scaling story here.`,
-    });
+    return [
+      'The records do not establish that a scalable backend could be built from this portfolio, and they do not record multi-region operations or Kafka. I will not infer that capability.',
+      'What they document is the shipped shape: a Python API layer, REST boundaries, and an AI reasoning layer over real inputs, with deployable frontends. That is an architecture description, not a scale rating.',
+    ].join(' ');
   }
 
   if (task === 'production_ready') {
     const live = getIdentityClaimsByFacet('commonPatterns', identity)
       .find((c) => /live URL/i.test(c.statement));
-    return opEvaluate(opCtx, {
-      conclusion: `Yes — for the kind of work this portfolio shows.`,
-      reasoning: live?.statement || `Three systems are live with public URLs. That's a stronger production signal than private prototypes.`,
-      evidence: `Readiness here means: design a service, integrate AI carefully, deploy. It does not automatically mean staff-architect tenure for a Fortune-500 mesh — that would be inventing seniority.`,
-    });
+    return [
+      'The records do not establish a production-readiness rating. I will not infer one.',
+      live?.statement
+        ? `${live.statement} That is a deployment fact. It does not establish staff-architect tenure or a Fortune-500 service mesh.`
+        : 'The records do not document a production-readiness rating.',
+    ].join(' ');
   }
 
   return null;

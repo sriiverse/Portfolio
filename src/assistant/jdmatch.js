@@ -23,7 +23,7 @@
  * public API (looksLikeJobDescription, analyzeJobDescription) did not change.
  */
 import { getAllProjects, getStack } from './knowledge.js';
-import { matchTaxonomyEntities } from './entities.js';
+import { matchTaxonomyAliasHits, matchTaxonomyEntities } from './entities.js';
 
 // Bounds how much of a pathologically long paste is actually scanned, so a
 // single message can never cause a noticeable stall (Sprint 3 plan — Risks).
@@ -82,10 +82,10 @@ function buildTalkingPoints(matchedSkills, relevantProjects) {
   const points = [];
   const topSkills = matchedSkills.slice(0, 3);
   for (const skill of topSkills) {
-    const project = relevantProjects.find((p) => p.stack.includes(skill)) || relevantProjects[0];
+    const project = relevantProjects.find((p) => p.stack.includes(skill));
     if (!project) continue;
     const decision = project.decisions.find((d) => d.toLowerCase().includes(skill.toLowerCase()));
-    points.push(decision ? `**${skill}** — ${decision}` : `**${skill}** — used directly in ${project.name} (${project.tagline}).`);
+    if (decision) points.push(`**${skill}** — ${decision}`);
   }
   return points;
 }
@@ -98,6 +98,7 @@ function buildTalkingPoints(matchedSkills, relevantProjects) {
 export function analyzeJobDescription(jdText) {
   const normalized = normalize(jdText);
   const requested = matchTaxonomyEntities(normalized, { normalized: true });
+  const requirementNotes = matchTaxonomyAliasHits(normalized, { normalized: true });
 
   if (!requested.length) {
     return {
@@ -106,6 +107,7 @@ export function analyzeJobDescription(jdText) {
       missingSkills: [],
       relevantProjects: [],
       talkingPoints: [],
+      requirementNotes: [],
       noSkillsDetected: true,
     };
   }
@@ -117,5 +119,5 @@ export function analyzeJobDescription(jdText) {
   const relevantProjects = rankRelevantProjects(matchedSkills);
   const talkingPoints = buildTalkingPoints(matchedSkills, relevantProjects);
 
-  return { score, matchedSkills, missingSkills, relevantProjects, talkingPoints, noSkillsDetected: false };
+  return { score, matchedSkills, missingSkills, relevantProjects, talkingPoints, requirementNotes, noSkillsDetected: false };
 }

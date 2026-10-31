@@ -13,7 +13,7 @@
  * and all receive the same grounded portfolio context so answers stay anchored.
  */
 
-import { retrieve, getDoc, getProfile, getAllProjects, getStack } from './knowledge.js';
+import { retrieve, getDoc, getProfile, getAllProjects, getStack, portfolioTechnologyNote } from './knowledge.js';
 import { analyzeJobDescription } from './jdmatch.js';
 import {
   ASSISTANT_CAPABILITIES,
@@ -28,6 +28,7 @@ import {
   mayOverrideDecline,
   DECISION_FIRST_STRATEGIES,
   isEngineeringDetailQuery,
+  isIncidentalProjectMention,
 } from './reasoning.js';
 import { classifyAnswerAspect, findExplicitProjects, wantsDirectAnswerOnly } from './conversation.js';
 import { isQueryForgeQuery, matchQueryForgeFacet } from './queryforgeKnowledge.js';
@@ -656,8 +657,8 @@ const LocalProvider = {
     if (isRecruiter) {
       const focusArea = profile?.focusArea;
       let lead = this._pickVariant(ctx.memory, 'recommend-lead', [
-        `Sudhanshu is a **backend-first engineer who also owns AI features and ships full product**. Three production systems are live — not prototypes:`,
-        `Across three shipped systems, the pattern holds: **Python backend, applied AI, full ownership** — working production software, not isolated demos:`,
+        `The records do not establish a personal hiring recommendation. Three shipped systems each have a public live URL:`,
+        `The records document three shipped systems. A live URL is a deployment fact, not hiring merit:`,
       ]);
 
       // Reorder projects based on focus area
@@ -667,21 +668,20 @@ const LocalProvider = {
       if (focusArea === 'fullstack') orderedProjects = [projects[1], projects[0], projects[2]]; // placementpro first
 
       const text = [
-        `## Why Hire Sudhanshu Sinha`,
+        `## What the records document`,
         ``,
         lead,
         ``,
         orderedProjects.map((p) => `- **${p.name}** — ${p.tagline}`).join('\n'),
         ``,
-        `### 💪 What He's Strongest At`,
-        `- **Python Backend Engineering** — Flask/FastAPI services, REST APIs, JWT auth, business logic`,
-        `- **Applied AI** — LLM integrations that ship as product features, not demos`,
-        `- **System Architecture** — end-to-end thinking across all five layers`,
-        `- **Problem Solving** — turns ambiguous requirements into observable, reliable software`,
+        `### What the records list`,
+        `- Flask, FastAPI, and REST APIs are backend stack entries. A list entry is not proficiency.`,
+        `- QueryForgeAI documents POST /generate-sql. Placement Pro+ documents Flask routes. RepoRadarAI documents GET /api/analyze and does not use a generative model.`,
+        `- The portfolio diagram has five layers. That diagram is a portfolio summary, not a personal authorship record.`,
         ``,
         focusArea ? `### 🎯 Specifically for Your ${focusArea} Need\n${this._recruiterFocusText(focusArea, projects)}` : '',
         ``,
-        `**Fastest way to assess fit:** ask me to open any project demo, or compare two projects.`,
+        `The records do not turn a live URL into a hiring recommendation. Ask about a project demo, or compare two projects, for the documented facts.`,
       ].filter(Boolean).join('\n');
 
       return { text, sources: [doc], kind: 'text', payload: null };
@@ -694,9 +694,9 @@ const LocalProvider = {
     const map = {
       backend:  `QueryForgeAI's inspected cloud API is FastAPI + Uvicorn. Placement Pro+ is Flask. RepoRadarAI's inspected implementation is Next.js App Router (GET /api/analyze) with Octokit — not a Python/FastAPI backend.`,
       ai:       `All three products ship applied intelligence, but not the same kind: QueryForgeAI uses LLMs for SQL generation/analysis, Placement Pro+ uses MiniLM embeddings plus graph/heuristic templates (not a chat LLM), and RepoRadarAI uses deterministic GitHub-metadata heuristics (not a generative model).`,
-      database: `QueryForgeAI is the deepest database engineering project — natural language to SQL, execution plan analysis, and schema-aware query optimization. It treats the database as an intelligent system, not just storage.`,
-      frontend: `Placement Pro+'s terminal-style OS interface and RepoRadarAI's React/TypeScript surface demonstrate full-stack delivery. The frontend is always decoupled from the backend over REST.`,
-      fullstack: `Placement Pro+ is the most complete full-stack product — Flask + React/TypeScript, structured profiles, graph skill-gap, template roadmaps, and a terminal-style OS frontend. End-to-end ownership, single engineer.`,
+      database: `QueryForgeAI documents natural language to SQL, execution plan analysis, and schema-aware query optimization. That is an implementation record, not a ranking.`,
+      frontend: `Placement Pro+ lists React and TypeScript. RepoRadarAI lists React, TypeScript, and Next.js. Those are stack entries, not a proficiency ranking.`,
+      fullstack: `Placement Pro+ documents Flask, React, TypeScript, a structured profile, graph skill-gap, and a template roadmap. That is an implementation record, not a ranking.`,
     };
     return map[focusArea] || `See the projects section for a detailed walkthrough of each system.`;
   },
@@ -708,9 +708,9 @@ const LocalProvider = {
 
     if (brief) {
       const text = [
-        `Sudhanshu is a backend-first engineer who turns messy real-world problems into intelligent software.`,
-        `Python is usually his backend spine; he crosses AI, APIs, databases, and frontend when the product needs it.`,
-        `The work is about systems that solve something real — not technology showcases.`,
+        `Sudhanshu Sinha's documented role title is ${getProfile().title}. That is a role label, not a specialization finding.`,
+        `The records do not establish a backend-leaning or backend-first specialty.`,
+        `QueryForgeAI, Placement Pro+, and RepoRadarAI each have a public live URL.`,
       ].join(' ');
       return { text, sources: [doc], kind: 'text', payload: null };
     }
@@ -776,27 +776,39 @@ const LocalProvider = {
       return { text, sources: [], kind: 'jd-match', payload: null };
     }
 
-    const { score, matchedSkills, missingSkills, relevantProjects, talkingPoints } = result;
-    const skillRows = [
-      ...matchedSkills.map((s) => `| ${s} | ✅ Matched |`),
-      ...missingSkills.map((s) => `| ${s} | ✕ Missing |`),
-    ];
+    const { score, missingSkills, relevantProjects, talkingPoints, requirementNotes } = result;
+    const notes = Array.isArray(requirementNotes) ? requirementNotes : [];
+    const evidenceRows = (notes.length ? notes : [...matchedSkills, ...missingSkills].map((canonical) => ({
+      canonical,
+      alias: canonical,
+      nameForm: true,
+      descriptiveAliases: [],
+    }))).map((note) => {
+      const evidence = portfolioTechnologyNote(note.canonical);
+      const broader = (note.descriptiveAliases || []).filter(Boolean);
+      const lead = note.nameForm
+        ? `The posting names ${note.canonical}.${broader.length ? ` Broader wording in the posting (${broader.join(', ')}) is a taxonomy keyword, not additional proof.` : ''}`
+        : `The posting says “${note.alias}”, which the taxonomy files under ${note.canonical}. That keyword match is not a finding that the posting named ${note.canonical}, and it is not proficiency evidence.`;
+      return `| ${note.canonical} | ${lead} ${evidence} |`;
+    });
 
     const text = [
       `## Job Description Match`,
       ``,
       `### 🎯 Match Score: ${score}%`,
       ``,
-      `| Skill | Status |`,
+      `This score counts portfolio-stack names among the detected requirement keywords. It is not a proficiency score.`,
+      ``,
+      `| Requirement | Evidence |`,
       `|---|---|`,
-      ...skillRows,
+      ...evidenceRows,
       ``,
       relevantProjects.length ? `### 🏗️ Relevant Projects` : '',
-      relevantProjects.length ? relevantProjects.map((p) => `- **${p.name}** — ${p.tagline}`).join('\n') : '',
+      relevantProjects.length ? relevantProjects.map((p) => `- **${p.name}** — ${p.tagline}. Project overlap is stack-list overlap, not a proficiency finding.`).join('\n') : '',
       ``,
       talkingPoints.length ? `### 💬 Suggested Interview Talking Points` : '',
       talkingPoints.length ? talkingPoints.map((t) => `- ${t}`).join('\n') : '',
-      missingSkills.length ? `\n> Missing skills (${missingSkills.join(', ')}) aren't in this stack today — worth being upfront about in an interview rather than glossing over.` : '',
+      missingSkills.length ? `\n> ${missingSkills.join(', ')} ${missingSkills.length === 1 ? 'is' : 'are'} not portfolio-stack names. That is not proof ${missingSkills.length === 1 ? 'it was' : 'they were'} never used, and it is not a proficiency finding.` : '',
     ].filter(Boolean).join('\n');
 
     return {
@@ -992,6 +1004,11 @@ const LocalProvider = {
 
     if (!spoken) spoken = this._applyConversationalMove(paragraphs, move, plan, ctx);
     spoken = this._scrubImplementationVoice(spoken, ctx);
+    // An unmatched question used to leave the empty DirectAnswer in place.
+    // Use the same no-data line as an honest decline. Do not invent a project.
+    if (!String(spoken || '').trim()) {
+      spoken = this._renderHonestDecline({ data: { reason: 'no-data' } }).fragment;
+    }
 
     this._bindConversationState(ctx, classification, spoken);
 
@@ -1010,6 +1027,9 @@ const LocalProvider = {
       ...(intelligenceIntent ? { _portfolioIntelligence: intelligenceIntent } : {}),
       ...(reasoningMeta ? { _reasoningStrategy: reasoningMeta } : {}),
     });
+    if (['why_hire', 'demo_ai', 'engineer_type', 'arch_why', 'keep_two', 'best_engineering'].includes(classification?.task)) {
+      delete payload.project;
+    }
 
     return { text: spoken, sources, kind, payload };
   },
@@ -1023,7 +1043,7 @@ const LocalProvider = {
     const task = classification?.task;
     if (!task || task === 'compare_passthrough') return;
     // A clarification lists project names as options. That is not a selection.
-    if (task === 'why_clarify') return;
+    if (task === 'why_clarify' || task === 'tech_mention' || task === 'portfolio_history' || task === 'stack_membership' || task === 'concept_record' || task === 'concept_alias' || task === 'eval_rest_apis' || task === 'why_postgres' || task === 'database_strength' || task === 'why_hire' || task === 'demo_ai' || task === 'engineer_type' || task === 'arch_why' || task === 'keep_two' || task === 'best_engineering') return;
     if (task === 'context_clarify') {
       if (typeof memory.bindConversationState === 'function') {
         memory.bindConversationState({
@@ -1069,6 +1089,14 @@ const LocalProvider = {
     // An unrelated answer can name every project. That is not a visitor selection,
     // and it must not retire a clarification the visitor has not resolved.
     if (pending && visitorIds.length === 0) return;
+
+    const compared = memory.lastCommitment?.task === 'cross_project_compare'
+      && Array.isArray(memory.lastCommitment?.projectIds)
+      && memory.lastCommitment.projectIds.length >= 2;
+    // An identity or general question does not choose one side of a comparison.
+    if (compared && visitorIds.length === 0) return;
+    // A passing mention names a project without choosing it.
+    if ((pending || compared) && isIncidentalProjectMention(visitorQuery)) return;
 
     const names = {
       queryforge: 'QueryForgeAI',
@@ -1361,7 +1389,8 @@ const LocalProvider = {
     if (wantsDirectAnswerOnly(q) || task === 'undocumented_detail' || task === 'honest_unknown'
       || task === 'queryforge_detail' || task === 'queryforge_unknown'
       || task === 'placementpro_detail' || task === 'placementpro_unknown'
-      || task === 'reporadar_detail' || task === 'reporadar_unknown') {
+      || task === 'reporadar_detail' || task === 'reporadar_unknown'
+      || task === 'portfolio_history' || task === 'stack_membership' || task === 'concept_record' || task === 'concept_alias' || task === 'tech_mention' || task === 'project_stack_evidence' || task === 'project_alias_record' || task === 'eval_rest_apis' || task === 'why_postgres' || task === 'database_strength' || task === 'backend_vs_frontend' || task === 'startup_fit' || task === 'backend_team_fit' || task === 'product_oriented' || task === 'best_role' || task === 'production_ready' || task === 'scalable_backend' || task === 'strongest_decision' || task === 'demo_frontend' || task === 'demo_backend' || task === 'why_hire' || task === 'demo_ai' || task === 'engineer_type' || task === 'keep_two' || task === 'best_engineering' || task === 'justify_best_project') {
       return null;
     }
     // Don't bolt navigation/CTAs onto short identity / brand / beyond-resume answers
@@ -1410,7 +1439,9 @@ const LocalProvider = {
         'Should I go deeper on how it was built, or open the demo?',
       ]);
     }
-    if (qType === 'SkillVerification' && primary?.ownership === 'owned') {
+    if (qType === 'SkillVerification' && primary?.ownership === 'owned'
+      && ctx?.payload?._portfolioIntelligence !== 'portfolio_history'
+      && ctx?.payload?._reasoningStrategy?.task !== 'portfolio_history') {
       return this._pickVariant(ctx?.memory, 'v3-invite-skill-yes', [
         'Want a project where that shows up, or the broader stack view?',
         'I can point at a shipped system that uses it, or outline the full stack — your call.',

@@ -7,7 +7,7 @@
  *
  * NO external calls. NO fabrication. Every returned source points back to content.js.
  */
-import { PROFILE, PROJECTS, STACK, ARCHITECTURE, JOURNEY, ASSISTANT_KB } from '../content.js';
+import { PROFILE, PROJECTS, STACK, ARCHITECTURE, JOURNEY, ASSISTANT_KB, SKILLS_TAXONOMY } from '../content.js';
 import { getQueryForgeFacetDocs } from './queryforgeKnowledge.js';
 import { getPlacementProFacetDocs } from './placementproKnowledge.js';
 import { getRepoRadarFacetDocs } from './reporadarKnowledge.js';
@@ -191,7 +191,7 @@ addDoc({
   id: 'why-hire',
   kind: 'recommend',
   title: 'Why hire Sudhanshu',
-  text: `Hire Sudhanshu because he ships. Three production AI systems are live — QueryForgeAI, Placement Pro+, RepoRadarAI — not prototypes. He works across the full stack but thinks in systems: backend correctness, applied AI and the architecture that connects them. He turns ambiguous problems into reliable, observable software. For recruiters: he's a backend-first engineer who can also own AI features and ship full product.`,
+  text: `The records do not establish a personal hiring recommendation. QueryForgeAI, Placement Pro+, and RepoRadarAI each have a public live URL. That is a deployment fact. The documented role title is ${PROFILE.title}. That is a role label, not a hiring recommendation.`,
   tags: stemSet(`why hire recruit recruiter should employ recommend hiring fit value strength`),
   source: 'Profile',
   link: '#about',
@@ -457,13 +457,264 @@ export function retrieveScoped(query, { limit = 4, entities = [], questionType =
 }
 
 /**
- * Pre-composed, evidence-free statement of absence for a non-owned entity —
- * docs/REASONING_ENGINE_SPEC.md Section 3.4's `EvidenceSet.gapNotes`. Two
- * templates: `'gap'` (a real, named technology Sudhanshu's own taxonomy
- * tracks, just not one that's shipped in `STACK`) reads more specifically
- * than `'unknown'` (a plausible-looking capitalized word `entities.js`'s
- * heuristic caught, with zero taxonomy record either way — nothing to even
- * confirm it's a real technology, let alone an unused one).
+ * Documented, non-overview sentences that name a technology.
+ * A taxonomy gap only means the name is absent from STACK. It does not
+ * decide whether a project record mentions the technology, whether a
+ * deployment uses it, or whether personal proficiency is established.
+ */
+/**
+ * A sentence names a technology as something the record documents.
+ * A dotted suffix such as ".git", or a sentence that says the technology
+ * is not used, is not that evidence.
+ */
+function isPositiveTechnologyMention(sentence, token) {
+  const escaped = String(token || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!escaped) return false;
+  const present = new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, 'i');
+  if (!present.test(sentence)) return false;
+  const dotted = new RegExp(`\\.${escaped}(?=$|[^a-z0-9])`, 'i');
+  const standalone = new RegExp(`(?:^|[^a-z0-9.])${escaped}(?=$|[^a-z0-9])`, 'i');
+  if (dotted.test(sentence) && !standalone.test(sentence)) return false;
+  const negated = new RegExp(`\\b(?:no|not|without)\\s+${escaped}\\b|\\b(?:does not|do not|doesn't|doesnt)\\s+use\\s+${escaped}\\b`, 'i');
+  return !negated.test(sentence);
+}
+
+function documentedTechnologyMentions(label) {
+  const token = String(label || '').trim();
+  if (!token) return [];
+  const groups = [
+    ['queryforge', getQueryForgeFacetDocs()],
+    ['placementpro', getPlacementProFacetDocs()],
+    ['reporadar', getRepoRadarFacetDocs()],
+  ];
+  const found = [];
+  for (const [id, docs] of groups) {
+    const sentences = [];
+    for (const doc of docs) {
+      if (doc?.confidence !== 'documented') continue;
+      if (doc.depth === 'overview' || doc.depth === 'unknown') continue;
+      const parts = String(doc.text || '').split(/(?<=[.!?])\s+/);
+      for (const part of parts) {
+        const sentence = part.trim();
+        if (!sentence || !isPositiveTechnologyMention(sentence, token) || sentences.includes(sentence)) continue;
+        sentences.push(sentence);
+        if (sentences.length >= 3) break;
+      }
+      if (sentences.length >= 3) break;
+    }
+    if (sentences.length) {
+      found.push({ id, name: getProject(id)?.name || id, sentences });
+    }
+  }
+  return found;
+}
+
+/**
+ * A taxonomy alias that names a documented project behavior, such as
+ * "caching", rather than the technology's own name.
+ */
+function compactAlias(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function isNameFormAlias(canonical, alias) {
+  const technology = compactAlias(canonical);
+  const form = compactAlias(alias);
+  if (!technology || !form) return false;
+  if (technology === form) return true;
+  if (form.length <= 2 && !/\s/.test(String(alias || ''))) return true;
+  if (form.length >= 2 && (technology.startsWith(form) || form.startsWith(technology))) return true;
+  if (form.length <= 2 && technology.endsWith(form)) return true;
+  const numeronym = form.match(/^([a-z])(\d+)([a-z])$/);
+  if (numeronym
+    && technology.startsWith(numeronym[1])
+    && technology.endsWith(numeronym[3])
+    && technology.slice(1, -1).length === Number(numeronym[2])) {
+    return true;
+  }
+  let shared = 0;
+  while (shared < technology.length && shared < form.length && technology[shared] === form[shared]) shared += 1;
+  if (!/\s/.test(String(alias || '')) && shared >= 4 && shared >= Math.min(form.length, technology.length) * 0.5) {
+    return true;
+  }
+  if (/\s/.test(String(alias || ''))) {
+    const initials = String(alias).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((word) => word[0]).join('');
+    if (initials && (technology === initials || technology === `${initials}s` || initials === technology.replace(/s$/, ''))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isDocumentedConceptAlias(alias) {
+  const token = String(alias || '').toLowerCase().trim();
+  if (!token) return false;
+  const docs = [
+    ...getQueryForgeFacetDocs(),
+    ...getPlacementProFacetDocs(),
+    ...getRepoRadarFacetDocs(),
+  ];
+  const namesAFacet = docs.some((doc) => String(doc.facet || '').toLowerCase() === token);
+  if (!namesAFacet) return false;
+  return SKILLS_TAXONOMY.some((entry) => entry.aliases.some((candidate) => (
+    String(candidate || '').toLowerCase() === token
+    && !isNameFormAlias(entry.canonical, candidate)
+  )));
+}
+
+/**
+ * Portfolio-history wording. Stack membership, project implementation, and
+ * personal proficiency stay separate claims.
+ */
+export function portfolioTechnologyNote(canonical, { elaborate = false } = {}) {
+  const label = String(canonical || '').trim();
+  if (!label) return '';
+  const mentions = documentedTechnologyMentions(label);
+  const listed = STACK.some((item) => String(item?.name || '').toLowerCase() === label.toLowerCase());
+  const proficiency = elaborate
+    ? `I still don't have a record of personal proficiency with ${label}.`
+    : `I don't have a record of personal proficiency with ${label}.`;
+  if (listed) {
+    const project = mentions.length
+      ? ` The project records do establish this: ${mentions.map((mention) => `**${mention.name}.** ${mention.sentences.join(' ')}`).join(' ')} That is implementation evidence from the project record. It does not establish personal proficiency.`
+      : ` ${projectStackMembershipSentence(label)} That listing is stack membership. It is not a documented personal-proficiency record.`;
+    return `${label} is listed in the portfolio stack. ${proficiency}${project}`;
+  }
+  if (!mentions.length) {
+    return `${label} is not part of the portfolio stack, and the project records do not document a ${label} implementation. I will not treat that absence as proof it was never used. ${proficiency}`;
+  }
+  const quoted = mentions.map((mention) => `**${mention.name}.** ${mention.sentences.join(' ')}`).join(' ');
+  return `${label} is not part of the portfolio stack. The project records do establish this: ${quoted} That is configuration-dependent or implementation evidence from the project record. It does not confirm a production deployment, and it is not a record of personal proficiency. ${proficiency}`;
+}
+
+/**
+ * A broad concept such as "containers" or "version control". The taxonomy
+ * alias is not evidence that the canonical technology is the one in use.
+ */
+function diagramLabelForConcept(label) {
+  const phrase = String(label || '').toLowerCase().trim();
+  if (!phrase) return '';
+  const stem = !phrase.includes(' ') && phrase.endsWith('s') && phrase.length > 4
+    ? phrase.slice(0, -1)
+    : phrase;
+  const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = phrase.includes(' ')
+    ? new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+    : new RegExp(`\\b${escaped}`, 'i');
+  const node = ARCHITECTURE.find((item) => re.test(`${item.label || ''} ${item.sub || ''} ${item.desc || ''}`));
+  if (!node) return '';
+  const sentence = String(node.desc || '').split(/(?<=[.!?])\s+/).find((part) => re.test(part)) || String(node.desc || '');
+  const names = String(node.sub || '').split('·').map((part) => part.trim()).filter(Boolean);
+  const listed = names.length ? ` It lists ${names.join(', ')} in that layer.` : '';
+  return `The portfolio ${String(node.label || 'architecture').toLowerCase()} diagram says "${sentence.trim()}".${listed} That is diagram labeling, not a documented project implementation, and not personal proficiency.`;
+}
+
+function projectStackMembershipSentence(label) {
+  const needle = String(label || '').toLowerCase();
+  const listed = [];
+  const absent = [];
+  for (const project of PROJECTS) {
+    const hit = (project.stack || []).some((name) => String(name).toLowerCase() === needle);
+    (hit ? listed : absent).push(project.name);
+  }
+  const absence = 'Absence from a project stack list is not proof it was never used.';
+  if (!listed.length) return `No project stack list includes ${label}. ${absence}`;
+  const listedVerb = listed.length > 1 ? 'list' : 'lists';
+  const absentVerb = absent.length > 1 ? 'do' : 'does';
+  const absentSentence = absent.length
+    ? ` ${absent.join(' and ')} ${absentVerb} not. ${absence}`
+    : '';
+  return `${listed.join(' and ')} ${listedVerb} ${label} on ${listed.length > 1 ? 'their project stacks' : 'its project stack'}.${absentSentence} A project stack entry is a listed item, not a verified implementation.`;
+}
+
+export function isPortfolioOrProjectStackName(label) {
+  const needle = String(label || '').toLowerCase();
+  if (!needle) return false;
+  if (STACK.some((item) => String(item?.name || '').toLowerCase() === needle)) return true;
+  return PROJECTS.some((project) => (project.stack || []).some((name) => String(name).toLowerCase() === needle));
+}
+
+export function projectStackEvidenceLine(projectId, label) {
+  const project = getProject(projectId);
+  const name = project?.name || projectId;
+  const hit = (project?.stack || []).find((item) => String(item).toLowerCase() === String(label || '').toLowerCase());
+  if (hit) {
+    return `${name} lists ${hit} on its project stack. That is a listed stack item, not a verified implementation and not personal proficiency.`;
+  }
+  return `${name} does not list ${label} on its project stack. That absence is not proof it was never used.`;
+}
+
+export function speakProjectStackEvidence(classification = {}) {
+  const project = getProject(classification.projectId);
+  const name = project?.name || 'That project';
+  const tech = String(classification.technology || '').trim();
+  const listed = (project?.stack || []).some((item) => String(item).toLowerCase() === tech.toLowerCase());
+  const still = classification.elaborate ? 'That is still the record. ' : '';
+  const limit = 'That is not a verified implementation and not a personal-proficiency record.';
+  if (classification.asksList) {
+    if (listed) return `${still}Yes. ${tech} is listed on ${name}'s project stack. ${limit}`;
+    return `${still}No. ${tech} is not listed on ${name}'s project stack. ${tech} is listed in the portfolio stack. Absence from this project's list is not proof it was never used. ${limit}`;
+  }
+  if (listed) {
+    return `${still}${tech} is listed on ${name}'s project stack. The project knowledge record does not document a ${tech} implementation. I will not treat that gap as proof ${name} does not use ${tech}. ${limit}`;
+  }
+  return `${still}${tech} is not listed on ${name}'s project stack, and the project knowledge record does not document a ${tech} implementation. I will not treat that absence as proof it does not use ${tech}. ${limit}`;
+}
+
+export function speakProjectAliasRecord(classification = {}) {
+  const project = getProject(classification.projectId);
+  const name = project?.name || 'That project';
+  const alias = String(classification.alias || 'that wording').trim();
+  const still = classification.elaborate ? 'That is still the record. ' : '';
+  const list = classification.asksList
+    ? `${alias} is not a name on ${name}'s project stack. `
+    : '';
+  return `${still}${list}${name} does not document ${alias} in its project knowledge record. I will not rename ${alias} to another technology. I will not treat that absence as proof ${name} does not use ${alias}. That is not a verified implementation and not a personal-proficiency record.`;
+}
+
+export function speakConceptAlias({ alias, elaborate = false, asksList = false } = {}) {
+  const label = String(alias || '').trim();
+  if (!label) return '';
+  const still = elaborate ? 'That is still the record for this wording. ' : '';
+  const proficiency = elaborate
+    ? `I still don't have a record of personal proficiency with ${label}.`
+    : `I don't have a record of personal proficiency with ${label}.`;
+  const limit = 'I will not treat that wording as a named technology, and I will not treat missing documentation as proof it was never used.';
+  if (asksList) {
+    return `${still}No. ${label} is not a name on the portfolio stack. The records do not document ${label} as a specific technology. I will not rename that wording to another technology. ${limit} ${proficiency}`;
+  }
+  const diagram = diagramLabelForConcept(label);
+  if (diagram) {
+    return `${still}The project records do not document a ${label} implementation. ${diagram} ${limit} ${proficiency}`;
+  }
+  return `${still}The records do not document ${label} as a specific technology. ${limit} ${proficiency}`;
+}
+
+/**
+ * The portfolio STACK list. Membership is not a proficiency claim.
+ */
+export function speakStackInventory({ elaborate = false } = {}) {
+  const names = STACK.map((item) => item.name).filter(Boolean);
+  const still = elaborate ? 'That is still the portfolio stack. ' : '';
+  return `${still}The portfolio stack lists ${names.join(', ')}. A name on that list is stack membership. It is not, by itself, a record of personal proficiency.`;
+}
+
+export function speakStackMembership(label, { elaborate = false } = {}) {
+  const name = String(label || '').trim();
+  const listed = STACK.some((item) => String(item?.name || '').toLowerCase() === name.toLowerCase());
+  const still = elaborate ? 'That is still the stack record. ' : '';
+  if (listed) {
+    return `${still}Yes. ${name} is listed in the portfolio stack. That is stack membership. The available records do not establish personal proficiency with ${name}.`;
+  }
+  return `${still}No. ${name} is not listed in the portfolio stack. That is a stack-membership finding. It does not prove ${name} was never used, and it does not establish personal proficiency.`;
+}
+
+/**
+ * Pre-composed statement for a non-owned entity —
+ * docs/REASONING_ENGINE_SPEC.md Section 3.4's `EvidenceSet.gapNotes`.
+ * `'gap'` is a taxonomy name absent from STACK. Project records can still
+ * mention it, so the note must not treat that absence as shipped-history
+ * proof. `'unknown'` has no taxonomy record either.
  */
 function gapNoteFor(entity) {
   // Brand / universe is never a "missing skill"
@@ -471,7 +722,7 @@ function gapNoteFor(entity) {
     return null;
   }
   if (entity.ownership === 'gap') {
-    return `${entity.canonical} is not part of Sudhanshu's shipped project history.`;
+    return portfolioTechnologyNote(entity.canonical);
   }
   return `There's no record of ${entity.canonical} in Sudhanshu's documented skill set.`;
 }
