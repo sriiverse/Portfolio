@@ -3747,6 +3747,40 @@ test('greeting, profile copy, and brand fallbacks do not claim personal judgment
   assert(!/engineering judgment/.test(getDoc('brand-sriiverseai').text), getDoc('brand-sriiverseai').text);
 });
 
+test('remaining intro, identity, frequency, and difference answers stay on the record', async () => {
+  const intro = await composeTurn('Tell me about yourself', createPipelineMemory(), { awarenessProject: 'reporadar' });
+  assert(intro.reasoning.task === 'self_intro', intro.reasoning.task);
+  assert(/I'm the Digital Brain of SRIIVERSEAI/i.test(intro.text), intro.text);
+  assert(/not a record of personal authorship/i.test(intro.text), intro.text);
+  assert(/public live URL/i.test(intro.text), intro.text);
+  assert(/personal choice only when it is documented/i.test(intro.text), intro.text);
+  assert(!/I build and ship|why I made the architecture|Center of gravity/i.test(intro.text), intro.text);
+
+  const who = await composeTurn('Who are you?', createPipelineMemory());
+  assert(who.reasoning.task === 'identity', who.reasoning.task);
+  assert(/I'm the Digital Brain of SRIIVERSEAI/i.test(who.text), who.text);
+  assert(/architecture notes/i.test(who.text), who.text);
+  assert(/personal choice only when it is documented/i.test(who.text), who.text);
+  assert(!/architecture calls|stack trade-offs/i.test(who.text), who.text);
+
+  const frequent = await composeTurn('Which technologies appear most?', createPipelineMemory());
+  assert(frequent.reasoning.task === 'tech_frequency', frequent.reasoning.task);
+  assert(/recorded projects/i.test(frequent.text), frequent.text);
+  assert(/React/i.test(frequent.text), frequent.text);
+  assert(!/my shipped projects|Portfolio-wide I also/i.test(frequent.text), frequent.text);
+
+  const different = await composeTurn('What makes this portfolio different?', createPipelineMemory());
+  assert(different.reasoning.task === 'portfolio_different', different.reasoning.task);
+  assert(/live systems/i.test(different.text), different.text);
+  assert(/not a record of a personal decision/i.test(different.text), different.text);
+  assert(/do not establish why a personal decision was made/i.test(different.text), different.text);
+  assert(!/why a decision was made/i.test(different.text), different.text);
+
+  const hire = await composeTurn('Why hire him?', createPipelineMemory());
+  assert(hire.reasoning.task === 'why_hire', hire.reasoning.task);
+  assert(!/thinks in systems/i.test(hire.text), hire.text);
+});
+
 test('a short follow-up does not resolve a pending project or invent one', async () => {
   const pendingChoice = createPipelineMemory();
   await composeTurn('What backend does it use?', pendingChoice);

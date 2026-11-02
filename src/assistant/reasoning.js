@@ -3126,11 +3126,12 @@ function opSummarize(ctx, { task }) {
 
   if (task === 'self_intro') {
     const subject = ctx.identity.subject;
+    const name = subject?.name || 'Sudhanshu Sinha';
+    const title = subject?.title || 'Python Backend Engineer · AI Developer · Full-Stack Engineer';
     return [
-      `I'm ${subject?.name || 'Sudhanshu Sinha'} — a ${subject?.title || 'Python backend engineer and AI developer'}.`,
-      `I build and ship production AI systems end to end: ${ctx.profiles.map(nm).join(', ')}.`,
-      `Center of gravity is backend correctness and applied AI — models that reason over real data, not demos that invent product behavior.`,
-      `If you want proof fast, start with a live project; if you want depth, ask me why I made the architecture and stack calls I did.`,
+      `I'm the Digital Brain of SRIIVERSEAI. The records identify ${name} by the documented role title ${title}. That title is not a record of personal authorship.`,
+      `The project records are ${ctx.profiles.map(nm).join(', ')}. Each has a public live URL. That is a deployment fact.`,
+      'The records do not establish that Sudhanshu personally made the architecture or stack calls. I describe a personal choice only when it is documented.',
     ].join('\n\n');
   }
 
@@ -3152,8 +3153,8 @@ function opSummarize(ctx, { task }) {
   if (task === 'identity') {
     return [
       `I'm the Digital Brain of SRIIVERSEAI — Sudhanshu Sinha's engineering universe.`,
-      `I can walk you through his shipped work the way an engineer would: projects as systems, architecture calls, stack trade-offs, and where the portfolio is honest about gaps.`,
-      `Ask about a project, how something was built, or who Sudhanshu is beyond a resume line — I'll stay inside what's actually evidenced.`,
+      'I can walk the shipped projects on record, the architecture notes, and the technologies listed with them. I describe a personal choice only when it is documented.',
+      `Ask about a project or what the records say. I'll stay inside what's actually evidenced.`,
     ].join('\n\n');
   }
 
@@ -3162,8 +3163,10 @@ function opSummarize(ctx, { task }) {
     const ai = philosophy.find((c) => /reasoning layer/i.test(c.statement));
     return [
       `A typical portfolio is a gallery of cards. SRIIVERSEAI is closer to an engineering environment — live systems and a Digital Brain that can reason about the work.`,
-      `${ai?.statement || 'AI is treated as a reasoning layer over real data.'} ${ship?.statement || 'The bias is toward shipping production software, not screenshots.'}`.trim(),
-      `You can click demos, then ask why a decision was made. That's the difference.`,
+      [ai?.statement, ship?.statement].filter(Boolean).length
+        ? `A portfolio summary says: ${[ai?.statement, ship?.statement].filter(Boolean).join(' ')} That summary is not a record of a personal decision.`
+        : 'The records do not establish why a personal decision was made.',
+      'You can open the live demos and the written architecture notes. The records do not establish why a personal decision was made. I will not invent that motive.',
     ].join('\n\n');
   }
 
@@ -3178,9 +3181,9 @@ function opSummarize(ctx, { task }) {
   if (task === 'tech_frequency') {
     const univ = patterns.filter((c) => /core stack constant|Shared stack pattern/i.test(c.statement));
     return [
-      `What shows up most across my shipped projects:`,
+      `What shows up most across the recorded projects:`,
       univ.map((c) => `- ${c.statement}`).join('\n') || patterns.slice(0, 5).map((c) => `- ${c.statement}`).join('\n'),
-      `Portfolio-wide I also list databases and deploy tools at the STACK/architecture layer even when a given project's public stack card is thinner.`,
+      `The portfolio STACK and architecture notes also list databases and deploy tools even when a given project's public stack card is thinner.`,
     ].join('\n\n');
   }
 
