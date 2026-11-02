@@ -3016,8 +3016,8 @@ function opSummarize(ctx, { task }) {
 
   if (task === 'brand_explain') {
     return [
-      `SRIIVERSEAI is Sudhanshu's engineering universe — the portfolio environment where his work, AI systems, architecture, and technical thinking live together.`,
-      `It is not just another project card, and it is not a skill in a taxonomy. It is the place those shipped systems (${ctx.profiles.map(nm).join(', ')}) and the judgment behind them become explorable.`,
+      `SRIIVERSEAI is Sudhanshu's engineering universe — the portfolio environment that holds the project records and the written architecture notes.`,
+      `It is not just another project card, and it is not a skill in a taxonomy. The shipped systems on record are ${ctx.profiles.map(nm).join(', ')}. Those records do not establish personal judgment.`,
       `I'm the Digital Brain inside that universe: I help you understand the person and the engineering, without inventing what isn't documented.`,
     ].join('\n\n');
   }
@@ -3169,7 +3169,7 @@ function opSummarize(ctx, { task }) {
 
   if (task === 'about_sudhanshu') {
     return [
-      `${subject?.name || 'Sudhanshu Sinha'} is a ${subject?.title || 'software engineer'}. ${subject?.tagline || ''}`.trim(),
+      `${subject?.name || 'Sudhanshu Sinha'} is a ${subject?.title || 'software engineer'}. The documented profile tagline is 'Building Intelligent Software That Solves Real Problems.' That line is profile copy, not a record of personal authorship.`,
       `The shipped projects are ${ctx.profiles.map(nm).join(', ')}. Each has a public live URL. That is a deployment fact, not a specialization finding.`,
       'The records do not establish a backend-leaning specialization. I will not infer one from the role title or the stack.',
     ].join('\n\n');

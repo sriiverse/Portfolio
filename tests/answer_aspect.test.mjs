@@ -10,7 +10,9 @@ import { PLACEMENTPRO_FACETS } from '../src/assistant/placementproKnowledge.js';
 import { REPORADAR_FACETS } from '../src/assistant/reporadarKnowledge.js';
 import { resolveEntities, assessConfidence, matchTaxonomyEntities } from '../src/assistant/entities.js';
 import { analyzeJobDescription } from '../src/assistant/jdmatch.js';
-import { buildEvidenceSet, retrieveScoped } from '../src/assistant/knowledge.js';
+import { buildEvidenceSet, getDoc, retrieveScoped } from '../src/assistant/knowledge.js';
+import { ASSISTANT_KB, PROFILE } from '../src/content.js';
+import { DIGITAL_BRAIN, WELCOME_VARIANTS } from '../src/assistant/persona.js';
 import { buildResponsePlan } from '../src/assistant/planning.js';
 import { getProvider } from '../src/assistant/providers.js';
 import { classifyReasoningStrategy, isIncidentalProjectMention, synthesizeReasoning, taskAvoidsProjectSelection } from '../src/assistant/reasoning.js';
@@ -3703,6 +3705,46 @@ test('weakness, strength, role, and opinion templates stay off the record', asyn
   assert(/do not establish personal failure-mode worries/i.test(modes.text), modes.text);
   assert(!/I'd worry|I'd expect/i.test(modes.text), modes.text);
   assert(/does not connect to a live database/i.test(modes.text), modes.text);
+});
+
+test('greeting, profile copy, and brand fallbacks do not claim personal judgment', async () => {
+  for (const welcome of WELCOME_VARIANTS) {
+    assert(/digital engineering brain/i.test(welcome), welcome);
+    assert(/shipped projects recorded here/i.test(welcome), welcome);
+    assert(/architecture notes on record/i.test(welcome), welcome);
+    assert(/technologies listed with them/i.test(welcome), welcome);
+    assert(/personal choice only when it is documented/i.test(welcome), welcome);
+    assert(!/trade-offs that shaped|technology choices|five-layer architecture|stack decisions|trade-offs behind/i.test(welcome), welcome);
+  }
+  const hi = await composeTurn('Hi', createPipelineMemory());
+  assert(/digital engineering brain/i.test(hi.text), hi.text);
+  assert(!/trade-offs that shaped|technology choices|five-layer architecture|stack decisions|trade-offs behind/i.test(hi.text), hi.text);
+
+  const about = await composeTurn('Tell me about Sudhanshu', createPipelineMemory(), { awarenessProject: 'reporadar' });
+  assert(about.reasoning.task === 'about_sudhanshu', about.reasoning.task);
+  assert(/The documented profile tagline is 'Building Intelligent Software That Solves Real Problems\.' That line is profile copy, not a record of personal authorship\./.test(about.text), about.text);
+  assert(/Python Backend Engineer/i.test(about.text), about.text);
+  assert(PROFILE.tagline === 'Building Intelligent Software That Solves Real Problems.', PROFILE.tagline);
+
+  const brand = await composeTurn('What is SRIIVERSEAI?', createPipelineMemory(), { awarenessProject: 'queryforge' });
+  assert(brand.reasoning.task === 'brand_explain', brand.reasoning.task);
+  assert(/project records and the written architecture notes/i.test(brand.text), brand.text);
+  assert(/do not establish personal judgment/i.test(brand.text), brand.text);
+  assert(/QueryForgeAI/i.test(brand.text) && /Placement Pro\+/i.test(brand.text) && /RepoRadarAI/i.test(brand.text), brand.text);
+  assert(!/judgment behind|technical thinking|engineering judgment|how he builds/i.test(brand.text), brand.text);
+
+  assert(/do not establish personal judgment/.test(DIGITAL_BRAIN.universe), DIGITAL_BRAIN.universe);
+  assert(!/engineering judgment|how he builds/.test(DIGITAL_BRAIN.universe), DIGITAL_BRAIN.universe);
+  const who = ASSISTANT_KB.find((entry) => entry.q.includes('who is sudhanshu'));
+  const brandFaq = ASSISTANT_KB.find((entry) => entry.q.includes('what is sriiverse'));
+  assert(/documented role title/.test(who.a) && /not a record of personal authorship/.test(who.a), who.a);
+  assert(!/He builds intelligent software|thinks in systems/.test(who.a), who.a);
+  assert(/written architecture notes/.test(brandFaq.a) && /do not establish personal judgment/.test(brandFaq.a), brandFaq.a);
+  assert(!/engineering judgment/.test(brandFaq.a), brandFaq.a);
+  assert(/documented role title/.test(getDoc('profile').text), getDoc('profile').text);
+  assert(!/He builds AI-powered/.test(getDoc('profile').text), getDoc('profile').text);
+  assert(/do not establish personal judgment/.test(getDoc('brand-sriiverseai').text), getDoc('brand-sriiverseai').text);
+  assert(!/engineering judgment/.test(getDoc('brand-sriiverseai').text), getDoc('brand-sriiverseai').text);
 });
 
 test('a short follow-up does not resolve a pending project or invent one', async () => {

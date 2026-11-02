@@ -45,7 +45,8 @@ function test(name, fn) {
 }
 
 test('persona exports Digital Engineering Brain identity', () => {
-  assert(/digital engineering brain/i.test(DIGITAL_BRAIN.nature), 'nature');
+  assert(DIGITAL_BRAIN.title === 'Digital Engineering Brain', 'title');
+  assert(/Digital Brain/.test(DIGITAL_BRAIN.nature) && !/digital engineering brain/i.test(DIGITAL_BRAIN.nature), 'nature');
   assert(SELF_MODEL.nature === DIGITAL_BRAIN.nature, 'SELF_MODEL aligned');
   assert(WELCOME_VARIANTS.length >= 2, 'welcome variants');
   assert(/digital engineering brain/i.test(fillWelcome(WELCOME_VARIANTS[0], 'Sudhanshu Sinha')), 'welcome fill');

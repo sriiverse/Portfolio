@@ -563,7 +563,8 @@ function applyAnswerShapeBudget(text, ctx = {}) {
     || task === 'strongest_decision'
     || task === 'why_flask'
     || task === 'why_fastapi'
-    || task === 'why_react';
+    || task === 'why_react'
+    || task === 'about_sudhanshu';
   const wantsExpand = wantsDocs
     || /\b(more detail|go deeper|elaborate|expand|full (explanation|write-?up)|everything about)\b/i.test(q)
     || isBoundFollowUpQuery(q);

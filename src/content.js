@@ -201,11 +201,11 @@ export const STATS = [
 export const ASSISTANT_KB = [
   {
     q: ['who is sudhanshu', 'who is he', 'tell me about sudhanshu', 'about sudhanshu', 'introduction', 'who built', 'founder', 'beyond resume', 'kind of engineer'],
-    a: 'Sudhanshu Sinha is a software engineer — a Python backend engineer, AI developer and full-stack engineer. He builds intelligent software that solves real problems: AI-powered products, scalable backend systems and modern web applications. Beyond a resume, he thinks in systems — shipping live products where AI reasons over real data.',
+    a: 'The records identify Sudhanshu Sinha by the documented role title Python Backend Engineer · AI Developer · Full-Stack Engineer. That title is not a record of personal authorship.',
   },
   {
     q: ['sriiverseai', 'sriiverse ai', 'what is sriiverse', 'engineering universe', 'typical portfolio'],
-    a: 'SRIIVERSEAI is Sudhanshu Sinha\'s engineering universe and portfolio environment — not merely another project or a skill-list entry. It is where his shipped AI products, backend architecture, full-stack systems, experiments, and engineering judgment come together. The Digital Brain is the intelligence layer that helps visitors explore that universe.',
+    a: 'SRIIVERSEAI is Sudhanshu Sinha\'s engineering universe and portfolio environment — not merely another project or a skill-list entry. It holds the project records and the written architecture notes. Those records do not establish personal judgment. The Digital Brain is the intelligence layer that helps visitors explore that universe.',
   },
   {
     q: ['digital brain', 'who are you', 'are you sudhanshu', 'your role'],
