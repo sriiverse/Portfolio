@@ -8,11 +8,11 @@
  *
  * Public API preserved for providers.js:
  *   classifyReasoningStrategy, synthesizeReasoning, mayOverrideDecline,
- *   DECISION_FIRST_STRATEGIES, buildProjectProfiles, rankByAttribute, …
+ *   DECISION_FIRST_STRATEGIES, buildProjectProfiles, …
  *
  * Classification still maps questions → cognitive strategy + task key.
- * Synthesis dispatches to generic operators (Recommend / Rank / …) driven by
- * objective vectors — not hardcoded project winners.
+ * Synthesis dispatches to generic operators. Personal rankings are not
+ * inferred from project existence or stack membership.
  */
 
 import {
@@ -59,22 +59,42 @@ export const DECISION_FIRST_STRATEGIES = new Set([
   'Recommend', 'Evaluate', 'Rank', 'Critique', 'Infer', 'Justify',
 ]);
 
-/* ============================================================
-   OBJECTIVE VECTORS (generic — no project IDs)
-   ============================================================ */
+/* Questions that must not select or rank a project from invented weights. */
+const NON_RANKING_TASKS = new Set([
+  'keep_two',
+  'best_engineering',
+  'justify_best_project',
+  'why_hire',
+  'demo_ai',
+  'engineer_type',
+  'arch_why',
+  'arch_tradeoffs',
+  'arch_scale',
+  'design_philosophy',
+  'learn_next',
+  'faang_interview',
+  'interview_first',
+  'recruiter_impress',
+  'best_work',
+  'most_difficult',
+  'followup_why_pick',
+  'weakest_area',
+  'strengths',
+  'capabilities',
+  'role_triad',
+  'challenge_response',
+  'self_behavioral',
+  'ops_story',
+  'opinion_take',
+  'probe_failure_modes',
+  'probe_complexity',
+  'probe_hardest',
+]);
 
-const TASK_OBJECTIVES = {
-  faang_interview: { softwareEngineering: 4, databases: 3, complexity: 2, productionReadiness: 1 },
-  best_engineering: { softwareEngineering: 5, databases: 2, architecture: 1 },
-  keep_two: { softwareEngineering: 3, recruiterImpact: 2, databases: 1 },
-  best_work: { recruiterImpact: 4, productionReadiness: 2, innovation: 1 },
-  most_difficult: { databases: 4, complexity: 3, aiUsage: 1 },
-  interview_first: { recruiterImpact: 4, productionReadiness: 2 },
-  recruiter_impress: { recruiterImpact: 5, productionReadiness: 1 },
-  demo_backend: { backendDepth: 5, architecture: 1 },
-  demo_ai: { aiUsage: 5, innovation: 1 },
-  demo_frontend: { frontendDepth: 5, recruiterImpact: 1 },
-};
+/** These answers state a record boundary. They must not become a project selection. */
+export function taskAvoidsProjectSelection(task) {
+  return NON_RANKING_TASKS.has(task);
+}
 
 /* ============================================================
    PROJECT PROFILES (from graph + decision records)
@@ -187,33 +207,6 @@ export function buildProjectProfiles(graph = getEngineeringGraph()) {
 
 function scoreClamp(n) {
   return Math.max(0, Math.min(10, Math.round(n)));
-}
-
-export function scoreByObjective(profile, weights = {}) {
-  let score = 0;
-  for (const [attr, w] of Object.entries(weights)) {
-    score += (profile.attrs[attr] || 0) * w;
-  }
-  return score;
-}
-
-export function rankByObjective(profiles, weights) {
-  return [...profiles].sort((a, b) => {
-    const d = scoreByObjective(b, weights) - scoreByObjective(a, weights);
-    return d || a.name.localeCompare(b.name);
-  });
-}
-
-export function rankByAttribute(profiles, attr) {
-  return rankByObjective(profiles, { [attr]: 1 });
-}
-
-export function topByAttribute(profiles, attr) {
-  return rankByAttribute(profiles, attr)[0] || null;
-}
-
-export function topByObjective(profiles, weights) {
-  return rankByObjective(profiles, weights)[0] || null;
 }
 
 /* ============================================================
@@ -1745,7 +1738,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
           questionFrame: buildQuestionFrame(prior, { memory: mem }),
         })
         : null;
-      if (['keep_two', 'best_engineering', 'justify_best_project', 'why_hire', 'demo_ai', 'engineer_type', 'arch_why'].includes(priorRank?.task)) {
+      if (NON_RANKING_TASKS.has(priorRank?.task)) {
         return { ...priorRank, elaborate: true, priorQuery: prior };
       }
       const historySubject = portfolioHistorySubject(prior || '');
@@ -1838,7 +1831,7 @@ export function classifyReasoningStrategy(query, ctx = {}) {
         memory: mem,
         questionFrame: buildQuestionFrame(priorWhy, { memory: mem }),
       });
-      if (['keep_two', 'best_engineering', 'justify_best_project', 'why_hire', 'demo_ai', 'engineer_type', 'arch_why'].includes(priorWhyClass?.task)) {
+      if (NON_RANKING_TASKS.has(priorWhyClass?.task)) {
         return { ...priorWhyClass, elaborate: true, priorQuery: priorWhy };
       }
     }
@@ -2356,10 +2349,10 @@ export function classifyReasoningStrategy(query, ctx = {}) {
   if (/why (was )?(this |the )?architecture|why.*(chosen|choose|designed)/i.test(t) && /architect|layer|system|design|built/i.test(t)) {
     return { strategy: 'Explain', task: 'arch_why' };
   }
-  if (/trade-?offs?|what would you (improve|change|rebuild)|would you (improve|change|rebuild)|if you rebuilt|rebuild .{0,24}differently/i.test(t)) {
+  if (/trade-?offs?|what would you (improve|change|rebuild)|would you (improve|change|rebuild)|if (?:i|you|he|sudhanshu) rebuilt|rebuilt this tomorrow|rebuild .{0,24}differently/i.test(t)) {
     return { strategy: 'Explain', task: 'arch_tradeoffs' };
   }
-  if (/how (do|does|would) (these |the )?projects? scale|do they scale|scalability/i.test(t)) {
+  if (/how (?:do|does|would) (?:these |the |you |he )?(?:projects? )?scale|how would you scale|do they scale|scalability/i.test(t)) {
     return { strategy: 'Explain', task: 'arch_scale' };
   }
 
@@ -2667,55 +2660,25 @@ function stillRecord(ctx) {
   return ctx?.classification?.elaborate ? 'That is still the record. ' : '';
 }
 
+function projectFacts() {
+  return 'QueryForgeAI documents FastAPI, schema-aware SQL generation, and a public live URL. Placement Pro+ documents Flask, a structured profile, and a public live URL. RepoRadarAI documents a Next.js app, GET /api/analyze, and a public repository.';
+}
+
+function unrankedAnswer(ctx, lead) {
+  return `${stillRecord(ctx)}${lead} ${projectFacts()} Those are implementation and deployment facts, not a ranking.`;
+}
+
+/** The inferred specialty stays in the identity record and is not spoken as fact. */
+function claimsForAnswer(facet, identity) {
+  return getIdentityClaimsByFacet(facet, identity)
+    .filter((claim) => claim.id !== 'arch:backend-leaning-fullstack');
+}
+
 function speak(strategy, conclusion, reasoning, evidence) {
   if (DECISION_FIRST_STRATEGIES.has(strategy)) {
     return formatDecisionFirst({ conclusion, reasoning, evidence });
   }
   return [conclusion, reasoning, evidence].filter(Boolean).join('\n\n');
-}
-
-/** Recommend: pick top project for an objective vector. */
-function opRecommend(ctx, {
-  weights,
-  conclusionLead,
-  whyLead,
-  evidenceLead,
-  audienceNote,
-}) {
-  const ranked = rankByObjective(ctx.profiles, weights);
-  const pick = ranked[0];
-  const rest = ranked.slice(1);
-  const conclusion = typeof conclusionLead === 'function'
-    ? conclusionLead(pick, ranked)
-    : `${conclusionLead} ${nm(pick)}.`;
-  const reasoning = typeof whyLead === 'function'
-    ? whyLead(pick, ranked, ctx)
-    : whyLead;
-  const evidence = typeof evidenceLead === 'function'
-    ? evidenceLead(pick, rest, ctx)
-    : (evidenceLead || audienceNote || describeOthers(rest));
-  return speak(ctx.strategy, conclusion, reasoning, evidence);
-}
-
-/** Rank: order projects; optionally keep N. */
-function opRank(ctx, { weights, keep = 1, conclusionLead, whyLead, evidenceLead }) {
-  const ranked = rankByObjective(ctx.profiles, weights);
-  if (keep === 1) {
-    return opRecommend(ctx, { weights, conclusionLead, whyLead, evidenceLead });
-  }
-  const top = ranked.slice(0, keep);
-  const drop = ranked.slice(keep);
-  const conclusion = typeof conclusionLead === 'function'
-    ? conclusionLead(top, drop, ranked)
-    : `I'd keep ${top.map(nm).join(' and ')}.`;
-  const reasoning = typeof whyLead === 'function' ? whyLead(top, drop, ctx) : whyLead;
-  const evidence = typeof evidenceLead === 'function' ? evidenceLead(top, drop, ctx) : evidenceLead;
-  return speak(ctx.strategy, conclusion, reasoning, evidence);
-}
-
-function describeOthers(rest) {
-  if (!rest.length) return '';
-  return `${rest.map((p) => nm(p)).join(' and ')} are still worth a look depending on the role.`;
 }
 
 /** Evaluate competency from graph used_in / identity. */
@@ -2725,36 +2688,32 @@ function opEvaluate(ctx, { conclusion, reasoning, evidence }) {
 
 /** Critique from identity strengths + growthAreas. */
 function opCritique(ctx, { mode }) {
-  const strengths = getIdentityClaimsByFacet('strengths', ctx.identity);
-
   if (mode === 'learn_next') {
     const q = String(ctx.query || '').toLowerCase();
     if (/\bi learn|should i learn|build systems like this|like (him|sudhanshu|this)\b/i.test(q)) {
-      return speak(
-        ctx.strategy,
-        `If you want to build systems like these, learn in this order: solid Python services and REST APIs, then a real database (schema + query plans), then how to ground an LLM in actual inputs, then enough frontend to ship the product.`,
-        `That path mirrors what's evidenced across QueryForgeAI, Placement Pro+, and RepoRadarAI — backend ownership first, AI as a reasoning layer, full product finish.`,
-        `I won't invent a secret curriculum beyond what the portfolio shows. Pick a layer and I can point at the project that teaches it best.`,
-      );
+      return [
+        'The records do not establish a personal learning order, and they do not establish that backend ownership comes first. I will not invent that sequence.',
+        'QueryForgeAI documents FastAPI and schema-aware SQL generation. Placement Pro+ documents Flask and a structured profile. RepoRadarAI documents a Next.js app and GitHub-metadata heuristics. Those are implementation records, not a curriculum.',
+      ].join(' ');
     }
-    return speak(
-      ctx.strategy,
-      `If I keep sharpening the public signal, I'd start with clearer data-store pinning, more async/API-first depth, and stronger observability storytelling.`,
-      `That doesn't invent a curriculum — it's inferred from what's present vs thin in the portfolio.`,
-      `I won't invent a learning plan I never wrote down. Name a stack gap (Kubernetes, Kafka, etc.) and I'll tell you honestly whether it appears here.`,
-    );
+    return [
+      'The records do not establish what Sudhanshu should learn next. I will not invent a curriculum.',
+      'The portfolio stack lists Docker, Vercel, Netlify, and Render. It does not list Kubernetes. That is a stack-membership gap, not a personal learning plan.',
+    ].join(' ');
   }
 
-  // weakest_area — short-first; no identity-export dump
-  const strengthHint = strengths[0]?.statement
-    ? strengths[0].statement.replace(/^Documented role focus:\s*/i, '')
-    : 'shipping live backend + AI systems';
-  return speak(
-    ctx.strategy,
-    `Relative to what's evidenced, the softest public signal is deep ops / cloud-native breadth — not core product engineering.`,
-    `The strong signal is still ${strengthHint}. I wouldn't pretend Kubernetes-scale ops is what this portfolio proves.`,
-    `Ask about a specific gap if you're hiring for it — I'll say whether it appears here.`,
-  );
+  const growth = getIdentityClaimsByFacet('growthAreas', ctx.identity);
+  const absent = growth.find((claim) => claim.id === 'growth:not-in-portfolio-stack');
+  const thin = growth.find((claim) => claim.id === 'growth:thin-per-project-stack-pins');
+  return [
+    `${stillRecord(ctx)}The records do not establish a personal weakest area. I will not name one.`,
+    absent?.statement
+      ? `${absent.statement} That is an absence from the stack, not a measured weakness.`
+      : 'No growth record names a personal weakness.',
+    thin?.statement
+      ? `${thin.statement}`
+      : '',
+  ].filter(Boolean).join(' ');
 }
 
 /** V4.5 Mod 1 — conversational-mode answers (challenge / self / opinion / gaps / probes). */
@@ -2768,19 +2727,19 @@ function opConversationMode(ctx, { task }) {
     if (/relocat/i.test(q)) {
       return speak(ctx.strategy,
         `I don't have a relocation preference recorded in this portfolio.`,
-        `What I can speak to is role fit — backend / AI platform / full-stack product engineering where shipping matters.`,
+        `The records do not establish a relocation preference or a role-fit conclusion.`,
         `If location or remote policy is a hard filter, treat that as outside what this assistant can claim.`);
     }
     if (/salary|compensation|pay/i.test(q)) {
       return speak(ctx.strategy,
         `I don't publish salary expectations here.`,
-        `Ask about the work instead — shipped systems, stack depth, or which project best matches the role.`);
+        `Ask about the documented projects, architecture, or stack instead. The records do not name which project best matches a role.`);
     }
     if (/google|meta|amazon|apple|netflix|microsoft/i.test(q)) {
       return speak(ctx.strategy,
         `I haven't worked at that company — nothing in this portfolio claims that employment.`,
-        `Closest signal is how I'd defend ${nm(qf)} under a FAANG-style systems loop, if that's what you're probing.`,
-        `Want that interview framing, or an honest gap list against a job description?`);
+        `The records do not establish how Sudhanshu would defend a project in that company's interview. I will not invent that defense.`,
+        `The shipped projects are still on record if you want their implementation facts.`);
     }
     if (/phd|certification|aws cert/i.test(q)) {
       return speak(ctx.strategy,
@@ -2789,137 +2748,81 @@ function opConversationMode(ctx, { task }) {
     }
     return speak(ctx.strategy,
       `That personal detail isn't in the portfolio.`,
-      `Ask about projects, architecture, stack, or why hire — those I can answer from evidence.`);
+      `Ask about projects, architecture, or stack. Those have records. A personal detail that is not recorded stays unanswered.`);
   }
 
   if (task === 'challenge_response') {
     if (/flask/i.test(q)) {
-      return speak(ctx.strategy,
-        `I'd concede FastAPI is my default today for new I/O-heavy Python services — QueryForgeAI already shipped that way.`,
-        `Flask stayed on ${nm(qf)} and ${nm(pp)} because orchestration clarity and an explicit request lifecycle mattered more than async throughput then.`,
-        `Bad choice for a greenfield async ingestion service? Yes. Bad choice for those two ships at the time? I still defend it.`);
+      return `${stillRecord(ctx)}The records do not establish a personal default for FastAPI or a concession about Flask. I will not invent one. QueryForgeAI documents FastAPI. Placement Pro+ documents Flask. Those are implementation records, not a defense of either choice.`;
     }
     if (/thin wrapper|reporadar/i.test(q)) {
-      return speak(ctx.strategy,
-        `Fair push. The thin version of RepoRadar would stop at a stars-and-README page.`,
-        `What I actually shipped is GitHub REST metadata → heuristic health/bus-factor/risk rules in a Next.js App Router app, plus a public repo you can inspect. It does not clone source or call an LLM.`,
-        `If that still reads thin for your bar, say which layer you want torn apart.`);
+      return `${stillRecord(ctx)}The records do not establish whether RepoRadarAI is a thin wrapper. I will not make that judgment. RepoRadarAI documents GitHub REST metadata, heuristic health scoring, and a Next.js app. It does not clone source or call an LLM.`;
     }
     if (/over-?engineered|five-?layer|defend/i.test(q)) {
-      return speak(ctx.strategy,
-        `I'd concede three apps don't need enterprise ceremony — the five-layer split is a teaching spine as much as a runtime necessity.`,
-        `What I won't concede: keeping AI as a reasoning layer over real inputs, with backend owning correctness. That separation paid for itself.`,
-        `If I collapsed layers tomorrow, I'd merge deploy concerns first — not AI into the UI.`);
+      return `${stillRecord(ctx)}The records do not establish a personal concession about the five-layer diagram. I will not invent one. The diagram is a portfolio teaching summary. QueryForgeAI, Placement Pro+, and RepoRadarAI do not share one inspected runtime.`;
     }
     if (/wrapping|just (an? )?llm|aren'?t you just/i.test(q)) {
-      return speak(ctx.strategy,
-        `If it were only a wrapper, the hard part would be the prompt string.`,
-        `The real work is grounding — schema-aware SQL on ${nm(qf)}, profile-anchored graph templates on ${nm(pp)}, GitHub-metadata heuristics on ${nm(rr)}.`,
-        `LLM calls are the engine; correctness against real data is the product.`);
+      return `${stillRecord(ctx)}The records do not establish whether these projects are only a model wrapper. I will not make that judgment. QueryForgeAI documents schema-aware SQL generation. Placement Pro+ documents MiniLM and a skill graph. RepoRadarAI documents GitHub-metadata heuristics and does not use a generative model.`;
     }
     if (/criticiz/i.test(q)) {
-      const target = /reporadar/i.test(q) ? rr : /placement/i.test(q) ? pp : qf;
-      return speak(ctx.strategy,
-        `If I'm criticizing ${nm(target)}, I'd start with eval harnesses and observability — shipped explanation UX before enough offline checks.`,
-        `Second: public docs under-pin some stack choices that the code actually uses.`,
-        `The strength that survives that critique is live systems with grounded AI, not slideware.`);
+      const named = /reporadar/i.test(q) ? nm(rr) : /placement/i.test(q) ? nm(pp) : /queryforge|flask/i.test(q) ? nm(qf) : null;
+      return `${stillRecord(ctx)}The records do not establish a personal critique${named ? ` of ${named}` : ''}. I will not invent where a review would start. ${projectFacts()}`;
     }
-    return speak(ctx.strategy,
-      `I'll take the challenge on the merits.`,
-      `Tell me which project or decision you're attacking and I'll concede what's weak and defend what's still right.`);
+    return `${stillRecord(ctx)}The records do not establish a concession or a defense. I will not invent one. Name a project or a recorded decision, and I will stay inside that record.`;
   }
 
   if (task === 'self_behavioral') {
     if (/leadership/i.test(q)) {
-      return speak(ctx.strategy,
-        `Leadership here looks like owning the full ship — problem, architecture, AI grounding, and a live URL — not managing a team roster.`,
-        `${nm(qf)}, ${nm(pp)}, and ${nm(rr)} each required end-to-end decisions without a larger org behind them.`,
-        `If you mean people-management leadership, that isn't evidenced in this portfolio.`);
+      return `${stillRecord(ctx)}The records do not establish leadership or people management. I will not infer either from a live URL. ${projectFacts()}`;
     }
     if (/disagreement/i.test(q)) {
-      return speak(ctx.strategy,
-        `I handle disagreement by separating taste from constraints — latency, correctness, and what we can ship this week.`,
-        `In these projects that meant defending grounded AI over flashy generation, and Flask vs FastAPI based on I/O shape rather than fashion.`,
-        `I don't have a corporate conflict story recorded here — only decision trade-offs you can inspect.`);
+      return `${stillRecord(ctx)}The records do not establish how a disagreement was handled. I will not invent that story. ${projectFacts()}`;
     }
     if (/code review/i.test(q)) {
-      return speak(ctx.strategy,
-        `I'd review for contracts and failure modes first — API shape, auth boundaries, and where the model can lie.`,
-        `Style nits come last. On ${nm(rr)} that means checking the API/UI split stays honest; on ${nm(qf)}, whether SQL stays schema-grounded.`,
-        `No team review transcript lives in this portfolio — that's how I'd show up if you put me on one.`);
+      return `${stillRecord(ctx)}The records do not establish a code-review practice. I will not invent one. No team review transcript is in this portfolio.`;
     }
     if (/regret/i.test(q)) {
-      return speak(ctx.strategy,
-        `I regret under-investing in eval harnesses early on ${nm(qf)} — I shipped explanation UX before enough offline checks for bad SQL.`,
-        `I'd also pin data stores per project more loudly in public docs.`,
-        `Those are documentation and rigor regrets, not "I wish I hadn't shipped."`);
+      return `${stillRecord(ctx)}The records do not establish a regret. I will not invent one. ${projectFacts()}`;
     }
     if (/mistake/i.test(q)) {
-      return speak(ctx.strategy,
-        `Early mistake: treating portfolio docs as done when stack pinning was still uneven across cards.`,
-        `Another: optimizing for demo narrative before hardening observability storytelling.`,
-        `Both are fixable process mistakes — the systems still shipped live.`);
+      return `${stillRecord(ctx)}The records do not establish a mistake. I will not invent one. ${projectFacts()}`;
     }
-    return speak(ctx.strategy,
-      `I can talk about ownership and trade-offs from the shipped work.`,
-      `Ask about a specific soft-skill angle — disagreement, review, regret — and I'll stay honest about what's evidenced vs inferred.`);
+    return `${stillRecord(ctx)}The records do not establish a behavioral story. I will not invent ownership, disagreement, review, regret, or a mistake from the project list.`;
   }
 
   if (task === 'ops_story') {
     if (/on-?call/i.test(q)) {
-      return speak(ctx.strategy,
-        `I don't have a rotating on-call history recorded in this portfolio.`,
-        `What I do have is production hosting for live products — failures would show up as deploy/runtime issues on Vercel/Render-style surfaces, not a pager rotation story.`,
-        `If you're hiring for SRE on-call muscle, say so — I won't invent pages I never carried.`);
+      return `${stillRecord(ctx)}The records do not establish an on-call history. I will not invent pages or incidents. QueryForgeAI documents Render and Netlify. Placement Pro+ documents Netlify. RepoRadarAI documents Vercel. Those are deployment records, not an incident log.`;
     }
-    return speak(ctx.strategy,
-      `I don't publish a postmortem log here.`,
-      `Honest production risk areas: LLM cold starts, schema drift breaking NL→SQL, and GitHub API rate limits on ${nm(rr)}.`,
-      `Those are the failure classes I'd expect — not a claim that a specific outage happened.`);
+    return `${stillRecord(ctx)}The records do not establish a production incident or the failure classes someone would expect. I will not invent them. No postmortem is published here. The projects document public live URLs, and those URLs are deployment facts.`;
   }
 
   if (task === 'opinion_take') {
     if (/microservice/i.test(q)) {
-      return speak(ctx.strategy,
-        `I haven't shipped a microservice mesh.`,
-        `For these products, a modular monolith with clear service boundaries was enough. I'd split when deploy or scale ownership actually diverges.`,
-        `Microservices as default fashion? Overrated. Microservices as a response to real org/scale seams? Fine.`);
+      return `${stillRecord(ctx)}The records do not establish a personal view of microservices. I will not say when I would split a system. The portfolio does not document a microservice mesh.`;
     }
     if (/\brag\b|retrieval/i.test(q)) {
-      return speak(ctx.strategy,
-        `Retrieval-augmented generation is useful when you need grounded lookup over a corpus — overrated when people bolt it on instead of fixing product context.`,
-        `My ships lean on structured grounding (schema, resume, repo) more than a classic vector-retrieval brochure.`,
-        `I'd use retrieval over documents when documents are the source of truth; I wouldn't pretend every LLM feature needs it.`);
+      return `${stillRecord(ctx)}The records do not establish a personal view of retrieval. I will not say when I would use it. QueryForgeAI documents schema-aware SQL generation. RepoRadarAI does not use a generative model. Those are implementation records, not an opinion about retrieval.`;
     }
     if (/typescript|worth it/i.test(q)) {
-      return speak(ctx.strategy,
-        `TypeScript is worth it on non-trivial UI surfaces — ${nm(rr)} uses it for a reason.`,
-        `I wouldn't mandate it on every script. For product React code, the contract clarity pays for itself.`);
+      return `${stillRecord(ctx)}The records do not establish whether TypeScript is worth it. I will not make that judgment. RepoRadarAI lists TypeScript. That is stack membership, not a preference.`;
     }
-    return speak(ctx.strategy,
-      `I can give a take, scoped to what I've actually shipped.`,
-      `Name the technology or pattern and I'll say whether I've used it — and what I think.`);
+    return `${stillRecord(ctx)}The records do not establish a personal opinion. I will not invent one. Name a technology that appears in the records, and I can say whether it is listed.`;
   }
 
   if (task === 'probe_failure_modes') {
-    return speak(ctx.strategy,
-      `Main AI-layer failure modes I'd worry about: schema drift breaking NL→SQL, overconfident rewrites, and latency under cold LLM starts.`,
-      `On ${nm(qf)} the guard is treating the model as a reasoning layer over the real schema — not a blind generator — and surfacing explanations instead of silent rewrites.`,
-      `${nm(rr)} adds API/rate-limit and shallow-summary failure modes; ${nm(pp)} fails when embeddings/graph mapping miss the profile skills or the caller hits the user_id/JWT identity gap.`);
+    return `${stillRecord(ctx)}The records do not establish personal failure-mode worries. I will not invent schema drift, cold starts, or rate-limit incidents. QueryForgeAI's cloud path does not connect to a live database and does not run real EXPLAIN. RepoRadarAI does not clone source or use a generative model. Placement Pro+ documents MiniLM and a skill graph. Those are implementation limits, not a personal worry list.`;
   }
 
   if (task === 'probe_scale') {
-    return speak(ctx.strategy,
-      `To push toward high QPS I'd scale along existing seams: horizontalize API workers, isolate the AI reasoning path, keep the frontend a thin client.`,
-      `Exact 10k QPS numbers aren't published for these ships — I won't invent SLAs.`,
-      `Bottlenecks I'd expect first: LLM inference, then DB/explain plans on ${nm(qf)}, then upstream API limits on ${nm(rr)}.`);
+    return [
+      'The records do not establish a personal scaling plan. I will not invent one.',
+      'The portfolio diagram lists a Deployment layer. QueryForgeAI documents Render and Netlify. Placement Pro+ documents Netlify. RepoRadarAI documents Vercel. Each project has a public live URL. Those are deployment records. They do not publish QPS or SLA numbers.',
+    ].join(' ');
   }
 
   if (task === 'probe_complexity') {
-    return speak(ctx.strategy,
-      `The SQL generation path isn't a closed-form algorithm with a tidy O-notation I measured end-to-end.`,
-      `Cost is dominated by model inference plus schema context size; plan analysis adds DB round-trips, not fancy asymptotic tricks.`,
-      `If you want complexity theater, I won't fake it — ask about grounding and failure modes instead.`);
+    return `${stillRecord(ctx)}The records do not establish a measured time or space complexity. I will not invent an O-notation or a cost model. QueryForgeAI documents schema-aware SQL generation through a model call. That is an implementation record, not a complexity measurement.`;
   }
 
   if (task === 'probe_hardest') {
@@ -2938,10 +2841,7 @@ function opConversationMode(ctx, { task }) {
         `I will not invent a resume-parsing fight or another architecture story to fill the gap.`,
         `Ask about verified mechanics instead: MiniLM mapping, the NetworkX path, template roadmaps, JWT auth, or what is not persisted.`);
     }
-    return speak(ctx.strategy,
-      `Hardest part on ${nm(focus)} was grounding — making SQL and explanations stay honest against a real schema, not the model call itself.`,
-      `Second hardest: knowing when to stop generating and start explaining so developers learn instead of copy-pasting blind rewrites.`,
-      `That's the bar that ship had to clear.`);
+    return `${stillRecord(ctx)}The records do not establish the hardest part of ${nm(focus)}. I will not name one. ${nm(focus)} documents schema-aware SQL generation. That is an implementation record, not a difficulty ranking.`;
   }
 
   return null;
@@ -3045,17 +2945,14 @@ function opExplain(ctx, { task }) {
 
   if (task === 'arch_tradeoffs') {
     return [
-      `The interesting trade-off of the five-layer model is operational overhead: more moving parts than a monolith, in exchange for clear ownership — especially keeping AI from becoming a blind generator.`,
-      `If I rebuilt this tomorrow, I'd probably push harder on observability, per-project data-store pinning, and async/API-first patterns where I/O dominates (the direction ${nm(rr)} already took).`,
-      `I won't invent a rewrite plan I never wrote down.`,
-    ].join('\n\n');
+      `${stillRecord(ctx)}The records do not establish which trade-offs Sudhanshu personally chose, and they do not record a rebuild plan. I will not invent one. The portfolio teaching diagram separates Frontend, Backend, AI Layer, Database, and Deployment. That is a diagram description, not a recorded trade-off. QueryForgeAI documents FastAPI. Placement Pro+ documents Flask. RepoRadarAI documents a Next.js app.`,
+    ].filter(Boolean).join('\n\n');
   }
 
   if (task === 'arch_scale') {
     return [
-      `I'd scale along the seams the architecture already defines: horizontalize Python API workers, keep AI as a reasoning service over real inputs, keep the frontend a thin REST client.`,
-      `Live deployments show production hosting, not laptop demos. Exact QPS/SLA numbers aren't published — I won't invent them.`,
-    ].join('\n\n');
+      `${stillRecord(ctx)}The records do not establish a personal scaling plan. I will not invent one. The portfolio diagram lists a Deployment layer. QueryForgeAI documents Render and Netlify. Placement Pro+ documents Netlify. RepoRadarAI documents Vercel. Each project has a public live URL. Those are deployment records. They do not publish QPS or SLA numbers.`,
+    ].filter(Boolean).join('\n\n');
   }
 
   return null;
@@ -3064,17 +2961,14 @@ function opExplain(ctx, { task }) {
 /** Summarize from identity + graph. */
 function opSummarize(ctx, { task }) {
   const subject = ctx.identity.subject;
-  const strengths = getIdentityClaimsByFacet('strengths', ctx.identity);
-  const philosophy = getIdentityClaimsByFacet('philosophy', ctx.identity);
-  const patterns = getIdentityClaimsByFacet('commonPatterns', ctx.identity);
-  const prefs = getIdentityClaimsByFacet('architecturalPrefs', ctx.identity);
+  const philosophy = claimsForAnswer('philosophy', ctx.identity);
+  const patterns = claimsForAnswer('commonPatterns', ctx.identity);
 
   if (task === 'capabilities') {
     return [
-      `I can explain Sudhanshu's projects, compare technologies, discuss architecture and trade-offs, answer recruiter questions, judge which work best demonstrates a skill, and adapt emphasis for recruiter, engineer, founder, or student conversations.`,
-      `I work as his digital engineering brain — portfolio knowledge graph, decision records, and engineering identity — ${ctx.profiles.length} shipped projects, ${ctx.records.length} decision records.`,
-      `If something isn't in his portfolio, I'll say so instead of guessing.`,
-    ].join('\n\n');
+      `${stillRecord(ctx)}I can explain the documented projects, compare recorded technologies, and discuss architecture that is written down. The records do not establish a ranking of which project demonstrates a skill. I will not make that ranking.`,
+      `This page holds ${ctx.profiles.length} project records and ${ctx.records.length} decision records. If something is not in the portfolio, I will say so instead of guessing.`,
+    ].join(' ');
   }
 
   if (task === 'brief_pitch') {
@@ -3129,11 +3023,12 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'role_triad') {
+    const title = subject?.title || 'Python Backend Engineer · AI Developer · Full-Stack Engineer';
     return [
-      `Sudhanshu is the engineer who builds.`,
-      `SRIIVERSEAI is the engineering universe where that work lives — projects, architecture, experiments, and technical judgment together.`,
-      `I'm the Digital Brain inside SRIIVERSEAI: the intelligence layer that helps you explore both. I'm not Sudhanshu the person, and I'm not a fourth product competing with QueryForge or RepoRadar.`,
-    ].join('\n\n');
+      `${stillRecord(ctx)}The records identify ${subject?.name || 'Sudhanshu Sinha'} by the documented role title ${title}. That title is not a record of personal authorship.`,
+      'SRIIVERSEAI is the portfolio environment that holds the project records.',
+      'I am the Digital Brain inside that environment. I am not Sudhanshu, and I am not a fourth product.',
+    ].join(' ');
   }
 
   if (task === 'honest_unknown') {
@@ -3249,10 +3144,8 @@ function opSummarize(ctx, { task }) {
     const decision = (p?.decisions || p?.project?.decisions || [])[0]
       || 'AI is treated as a reasoning layer over real inputs, with the backend owning correctness.';
     return [
-      `${nm(p)} — ${tagline.replace(/\.$/, '')}.`,
+      `${nm(p)} — ${tagline.replace(/\.$/, '')}. The records do not establish personal authorship from this summary. ${nm(p)} has a public live URL. That is a deployment fact.`,
       decision,
-      `I built it to solve a concrete problem — not as a slide-deck prototype — and it's live if you want to poke at it.`,
-      `Ask if you want architecture, trade-offs, or a full walkthrough.`,
     ].join('\n\n');
   }
 
@@ -3292,11 +3185,13 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'design_philosophy') {
-    const design = getIdentityClaimsByFacet('designPrinciples', ctx.identity);
+    const topology = claimsForAnswer('designPrinciples', ctx.identity)
+      .find((c) => /layered topology/i.test(c.statement));
     return [
-      `My design philosophy is simple: **clear layer ownership, AI grounded in real inputs, ship the whole product.**`,
-      design[0]?.statement || philosophy[0]?.statement || '',
-      `The five-layer diagram is a teaching spine. ${ctx.profiles.map(nm).join(', ')} do not share one inspected runtime.`,
+      `${stillRecord(ctx)}The records do not establish a personal design philosophy. I will not present the portfolio diagram as one.`,
+      topology?.statement
+        ? `The portfolio diagram description says: ${topology.statement} That sentence describes the diagram. It is not a personal philosophy. ${ctx.profiles.map(nm).join(', ')} do not share one inspected runtime.`
+        : `The five-layer diagram is a portfolio summary. ${ctx.profiles.map(nm).join(', ')} do not share one inspected runtime.`,
     ].filter(Boolean).join('\n\n');
   }
 
@@ -3307,10 +3202,13 @@ function opSummarize(ctx, { task }) {
   }
 
   if (task === 'strengths') {
+    const title = subject?.title || 'Python Backend Engineer · AI Developer · Full-Stack Engineer';
     return [
-      `Strengths I can actually defend from the portfolio:`,
-      ...strengths.slice(0, 4).map((c) => `- ${c.statement}`),
-    ].join('\n\n');
+      `${stillRecord(ctx)}The records do not establish personal strengths. I will not rank or defend them.`,
+      `The documented role title is ${title}. That is a role label, not a strength finding.`,
+      `${ctx.profiles.map(nm).join(', ')} each have a public live URL. That is a deployment fact. Python appears in the portfolio records. That is membership, not a measured strength.`,
+      'A five-layer teaching diagram exists. The three shipped projects do not share one inspected runtime.',
+    ].join(' ');
   }
 
   return null;
@@ -3325,7 +3223,7 @@ function opJustify(ctx, { task }) {
   }
 
   if (task === 'strongest_decision') {
-    const phil = getIdentityClaimsByFacet('philosophy', ctx.identity)
+    const phil = claimsForAnswer('philosophy', ctx.identity)
       .find((c) => /reasoning layer/i.test(c.statement));
     return [
       'The records do not rank one engineering decision as the strongest. I will not invent that ranking.',
@@ -3342,28 +3240,9 @@ function opJustify(ctx, { task }) {
   }
 
   if (task === 'followup_why_pick') {
-    const boundId = ctx.ctx?.memory?.lastCommitment?.projectId
-      || ctx.ctx?.memory?.lastProject
-      || null;
-    const pick = (boundId && ctx.byId(boundId)) || ctx.byId('reporadar') || ctx.profiles[0];
-    const prev = ctx.ctx?.memory?.activeMode || ctx.ctx?.memory?.lastCommitment?.task || '';
-    let why;
-    if (/faang/i.test(prev)) {
-      why = `That pick rewards systems thinking under interview pressure — ${nm(pick)} is where the architecture and trade-offs are easiest to probe.`;
-    } else if (/interview_first|recruiter|best_work/i.test(prev)) {
-      why = `You can open a live demo${pick?.project?.repo ? ' and the public repo' : ''} in the same breath — API/UI split is easy to walk without a long setup.`;
-    } else {
-      return [
-        `The project records do not establish why that choice was made.`,
-        `I will not infer a personal motive that is not written down.`,
-      ].join('\n\n');
-    }
-    return speak(
-      ctx.strategy,
-      `The previous answer selected ${nm(pick)} by the criterion already stated.`,
-      why,
-      `I will not add a personal motive that the project records do not establish.`,
-    );
+    return [
+      `${stillRecord(ctx)}The records do not establish a personal reason for preferring one project. I will not invent that motive. ${projectFacts()}`,
+    ].filter(Boolean).join('\n\n');
   }
 
   return null;
@@ -3494,39 +3373,19 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
 
   // --- Recommend / Rank via objective vectors ---
   if (task === 'faang_interview') {
-    const qf = byId('queryforge');
-    const rr = byId('reporadar');
-    const pp = byId('placementpro');
-    return opRecommend(opCtx, {
-      weights: TASK_OBJECTIVES.faang_interview,
-      conclusionLead: (pick) => `I'd put ${nm(pick)} in front of a FAANG-style interviewer.`,
-      whyLead: (pick) => `That interview rewards systems thinking and trade-offs — not just a pretty demo. ${nm(pick)} is where I pushed backend architecture, schema-aware SQL/AI reasoning, and production deployment hardest.`,
-      evidenceLead: () => `${nm(rr)} is the better live walkthrough if they want open-source code on the table. ${nm(pp)} is secondary unless the role is product/platform for career tooling.`,
-    });
+    return unrankedAnswer(opCtx, 'The records do not establish which project would impress a FAANG interviewer. I will not put one first.');
   }
 
-  if (task === 'recruiter_impress' || task === 'interview_first' || task === 'best_work') {
-    const weights = TASK_OBJECTIVES[task] || TASK_OBJECTIVES.recruiter_impress;
-    const qf = byId('queryforge');
-    const pp = byId('placementpro');
-    const leads = {
-      recruiter_impress: {
-        conclusionLead: (pick) => `For a recruiter, I'd lead with ${nm(pick)}.`,
-        whyLead: (pick) => `Recruiters respond to a live URL and a story they can click in under a minute. ${nm(pick)} ships publicly${pick?.project?.repo ? ', is open-sourced,' : ''} and shows a clean full-stack split.`,
-        evidenceLead: () => `Keep ${nm(qf)} ready if they ask about data/AI rigor, and ${nm(pp)} if the role leans product.`,
-      },
-      interview_first: {
-        conclusionLead: (pick) => `I'd open with ${nm(pick)}.`,
-        whyLead: (pick) => `You can demo it live, walk the API/UI split, and go as deep as you want${pick?.project?.repo ? ' — including the public repo' : ''}.`,
-        evidenceLead: () => `Then use ${nm(qf)} for data/AI correctness or ${nm(pp)} for product/platform roles.`,
-      },
-      best_work: {
-        conclusionLead: (pick) => `I'd lead with ${nm(pick)}.`,
-        whyLead: () => `It's the clearest full-system story I shipped: live product, modern split stack, and inspectable code where available.`,
-        evidenceLead: (pick, rest) => `${rest.map(nm).join(' and ')} remain strong domain/product plays — but ${pick?.name} is the strongest "here's the work" signal.`,
-      },
-    };
-    return opRecommend(opCtx, { weights, ...leads[task] });
+  if (task === 'recruiter_impress') {
+    return unrankedAnswer(opCtx, 'The records do not establish which project would impress a recruiter. I will not lead with one.');
+  }
+
+  if (task === 'interview_first') {
+    return unrankedAnswer(opCtx, 'The records do not establish which project to open with or demo first. I will not choose one.');
+  }
+
+  if (task === 'best_work') {
+    return unrankedAnswer(opCtx, 'The records do not establish which project is the best or strongest work. I will not lead with one.');
   }
 
   if (task === 'keep_two') {
@@ -3540,12 +3399,7 @@ export function synthesizeReasoning(classification, query, ctx = {}) {
   }
 
   if (task === 'most_difficult') {
-    return opRank(opCtx, {
-      weights: TASK_OBJECTIVES.most_difficult,
-      conclusionLead: (pick) => `Technically, ${nm(pick)} is the hardest problem domain.`,
-      whyLead: () => `Natural language → SQL, execution-plan awareness, and schema-grounded explanations require correctness against a real database model — a stricter bar than summarization-style intelligence.`,
-      evidenceLead: (pick, rest) => `${rest.map(nm).join(' and ')} remain operationally complex. If "difficult" means correctness under schema constraints, ${pick?.name} wins.`,
-    });
+    return unrankedAnswer(opCtx, 'The records do not establish which project is the most difficult. I will not name a winner.');
   }
 
   if (task === 'demo_backend' || task === 'demo_ai' || task === 'demo_frontend') {

@@ -209,7 +209,7 @@ export const ASSISTANT_KB = [
   },
   {
     q: ['digital brain', 'who are you', 'are you sudhanshu', 'your role'],
-    a: 'I am the Digital Brain of SRIIVERSEAI. Sudhanshu is the engineer who builds; SRIIVERSEAI is the universe where that work lives; I am the interface that helps you explore both. I am not Sudhanshu the person, and I am not a fourth product card.',
+    a: 'I am the Digital Brain of SRIIVERSEAI. The records identify Sudhanshu Sinha by his documented role title. That title is not a record of personal authorship. SRIIVERSEAI is the portfolio environment that holds the project records. I am not Sudhanshu, and I am not a fourth product card.',
   },
   {
     q: ['queryforge', 'sql', 'database assistant', 'query optim'],

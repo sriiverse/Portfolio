@@ -13,7 +13,8 @@ import { analyzeJobDescription } from '../src/assistant/jdmatch.js';
 import { buildEvidenceSet, retrieveScoped } from '../src/assistant/knowledge.js';
 import { buildResponsePlan } from '../src/assistant/planning.js';
 import { getProvider } from '../src/assistant/providers.js';
-import { classifyReasoningStrategy, isIncidentalProjectMention, synthesizeReasoning } from '../src/assistant/reasoning.js';
+import { classifyReasoningStrategy, isIncidentalProjectMention, synthesizeReasoning, taskAvoidsProjectSelection } from '../src/assistant/reasoning.js';
+import { getIdentityClaimById } from '../src/assistant/identity.js';
 import { pickContextualInvite, adaptDraft } from '../src/assistant/adaptive.js';
 import { finalizeWithReflection } from '../src/assistant/reflection.js';
 import { renderMarkdown } from '../src/assistant/renderer.js';
@@ -1053,7 +1054,7 @@ async function composeTurn(userText, memory, { awarenessProject = null } = {}) {
   };
   const draft = await getProvider()._draftAnswer(bound.query, ctx);
   const response = finalizeWithReflection(adaptDraft(draft, ctx), ctx);
-  const resolved = isIncidentalProjectMention(userText)
+  const resolved = (isIncidentalProjectMention(userText) || taskAvoidsProjectSelection(reasoning.task))
     ? null
     : (bound.focusProject || response.payload?.project?.id || null);
   memory.add('assistant', response.text || '', { project: resolved });
@@ -3552,6 +3553,156 @@ test('ranking, hiring, specialty, and authorship claims stay at the record', asy
   const built = await composeTurn('What backend does QueryForgeAI use?', createPipelineMemory(), { awarenessProject: 'placementpro' });
   assert(/FastAPI/i.test(built.text), built.text);
   assert(built.memory.lastProject === 'queryforge', built.memory.lastProject);
+});
+
+test('personal plans, picks, and the inferred specialty stay off the record', async () => {
+  const specialty = getIdentityClaimById('arch:backend-leaning-fullstack');
+  if (specialty) {
+    assert(specialty.confidence === 'inferred', specialty.confidence);
+    assert(/Backend-leaning full-stack: Python\/AI core/i.test(specialty.statement), specialty.statement);
+  }
+  const inferredSentence = 'Backend-leaning full-stack:';
+
+  const trade = await composeTurn('If I rebuilt the architecture tomorrow, what would change?', createPipelineMemory(), { awarenessProject: 'queryforge' });
+  assert(trade.reasoning.task === 'arch_tradeoffs', trade.reasoning.task);
+  assert(/do not establish which trade-offs/i.test(trade.text), trade.text);
+  assert(/Frontend/i.test(trade.text) && /FastAPI/i.test(trade.text), trade.text);
+  assert(!/If I rebuilt|I'd probably/i.test(trade.text), trade.text);
+  assert(!trade.text.includes(inferredSentence), trade.text);
+  assert(trade.memory.lastProject == null, trade.memory.lastProject);
+
+  const scale = await composeTurn('How would you scale the architecture?', createPipelineMemory(), { awarenessProject: 'placementpro' });
+  assert(scale.reasoning.task === 'arch_scale', scale.reasoning.task);
+  assert(/do not establish a personal scaling plan/i.test(scale.text), scale.text);
+  assert(/Render/i.test(scale.text) && /Vercel/i.test(scale.text), scale.text);
+  assert(!/I'd scale/i.test(scale.text), scale.text);
+  assert(scale.memory.lastProject == null, scale.memory.lastProject);
+
+  const philosophy = await composeTurn('What is your design philosophy?', createPipelineMemory(), { awarenessProject: 'reporadar' });
+  assert(philosophy.reasoning.task === 'design_philosophy', philosophy.reasoning.task);
+  assert(/do not establish a personal design philosophy/i.test(philosophy.text), philosophy.text);
+  assert(/layered topology/i.test(philosophy.text), philosophy.text);
+  assert(!/My design philosophy/i.test(philosophy.text), philosophy.text);
+  assert(!philosophy.text.includes(inferredSentence), philosophy.text);
+
+  const memory = createPipelineMemory();
+  const compared = await composeTurn('Compare QueryForgeAI and Placement Pro+.', memory, { awarenessProject: 'reporadar' });
+  const comparedIds = [...(compared.memory.lastCommitment?.projectIds || [])].sort();
+  const faang = await composeTurn('Which project would impress a FAANG interviewer?', memory, { awarenessProject: 'reporadar' });
+  assert(faang.reasoning.task === 'faang_interview', faang.reasoning.task);
+  assert(/do not establish which project would impress a FAANG interviewer/i.test(faang.text), faang.text);
+  assert(/QueryForgeAI/i.test(faang.text) && /RepoRadarAI/i.test(faang.text), faang.text);
+  assert(!/I'd put|I'd open|I'd lead/i.test(faang.text), faang.text);
+  assert([...(faang.memory.lastCommitment?.projectIds || [])].sort().join() === comparedIds.join(), faang.memory.lastCommitment?.projectIds);
+  assert(faang.memory.lastProject == null, faang.memory.lastProject);
+  const whyFaang = await composeTurn('Why?', memory, { awarenessProject: 'queryforge' });
+  assert(whyFaang.reasoning.task === 'faang_interview', whyFaang.reasoning.task);
+  assert(/That is still the record/i.test(whyFaang.text), whyFaang.text);
+  assert(!/I'd put|previous answer selected|that choice sits right inside/i.test(whyFaang.text), whyFaang.text);
+  assert([...(whyFaang.memory.lastCommitment?.projectIds || [])].sort().join() === comparedIds.join(), whyFaang.memory.lastCommitment?.projectIds);
+
+  const best = await composeTurn('Which project is your best work?', createPipelineMemory(), { awarenessProject: 'queryforge' });
+  assert(best.reasoning.task === 'best_work', best.reasoning.task);
+  assert(/do not establish which project is the best or strongest work/i.test(best.text), best.text);
+  assert(!/I'd lead|strongest "here's the work"/i.test(best.text), best.text);
+  assert(best.memory.lastProject == null, best.memory.lastProject);
+
+  const hard = await composeTurn('What was the most difficult project?', createPipelineMemory(), { awarenessProject: 'placementpro' });
+  assert(hard.reasoning.task === 'most_difficult', hard.reasoning.task);
+  assert(/do not establish which project is the most difficult/i.test(hard.text), hard.text);
+  assert(/schema-aware SQL generation/i.test(hard.text), hard.text);
+  assert(!/hardest problem domain|\bwins\b/i.test(hard.text), hard.text);
+
+  const about = await composeTurn('Tell me about RepoRadarAI.', createPipelineMemory(), { awarenessProject: 'queryforge' });
+  assert(/do not establish personal authorship/i.test(about.text), about.text);
+  assert(/RepoRadarAI/i.test(about.text), about.text);
+  assert(!/I built it/i.test(about.text), about.text);
+  assert(about.memory.lastProject === 'reporadar', about.memory.lastProject);
+
+  const learn = await composeTurn('What should I learn next if I want to build systems like this?', createPipelineMemory(), { awarenessProject: 'queryforge' });
+  assert(learn.reasoning.task === 'learn_next', learn.reasoning.task);
+  assert(/do not establish that backend ownership comes first/i.test(learn.text), learn.text);
+  assert(/FastAPI/i.test(learn.text) && /Flask/i.test(learn.text), learn.text);
+  assert(!/backend ownership first/i.test(learn.text), learn.text);
+  assert(!learn.text.includes(inferredSentence), learn.text);
+  assert(learn.memory.lastProject == null, learn.memory.lastProject);
+});
+
+test('weakness, strength, role, and opinion templates stay off the record', async () => {
+  const api = await import('../src/assistant/reasoning.js');
+  assert(api.opRecommend === undefined && api.opRank === undefined, 'ranking operators are exported');
+  assert(api.rankByObjective === undefined && api.topByObjective === undefined, 'ranking helpers are exported');
+
+  const memory = createPipelineMemory();
+  const compared = await composeTurn('Compare QueryForgeAI and Placement Pro+.', memory, { awarenessProject: 'reporadar' });
+  const comparedIds = [...(compared.memory.lastCommitment?.projectIds || [])].sort();
+  const weak = await composeTurn("What's his weakest area?", memory, { awarenessProject: 'reporadar' });
+  assert(weak.reasoning.task === 'weakest_area', weak.reasoning.task);
+  assert(/do not establish a personal weakest area/i.test(weak.text), weak.text);
+  assert(!/softest public signal|wouldn't pretend|I would improve/i.test(weak.text), weak.text);
+  assert([...(weak.memory.lastCommitment?.projectIds || [])].sort().join() === comparedIds.join(), weak.memory.lastCommitment?.projectIds);
+  assert(weak.memory.lastProject == null, weak.memory.lastProject);
+  const whyWeak = await composeTurn('Why?', memory, { awarenessProject: 'queryforge' });
+  assert(whyWeak.reasoning.task === 'weakest_area', whyWeak.reasoning.task);
+  assert(/That is still the record/i.test(whyWeak.text), whyWeak.text);
+  assert(!/softest public signal|wouldn't pretend/i.test(whyWeak.text), whyWeak.text);
+
+  const caps = await composeTurn('What can you do?', createPipelineMemory(), { awarenessProject: 'queryforge' });
+  assert(caps.reasoning.task === 'capabilities', caps.reasoning.task);
+  assert(/do not establish a ranking of which project demonstrates a skill/i.test(caps.text), caps.text);
+  assert(!/judge which work best demonstrates a skill/i.test(caps.text), caps.text);
+  assert(caps.memory.lastProject == null, caps.memory.lastProject);
+
+  const strengths = await composeTurn('What are his strengths?', createPipelineMemory(), { awarenessProject: 'placementpro' });
+  assert(strengths.reasoning.task === 'strengths', strengths.reasoning.task);
+  assert(/do not establish personal strengths/i.test(strengths.text), strengths.text);
+  assert(/Python/i.test(strengths.text) && /live URL/i.test(strengths.text), strengths.text);
+  assert(!/Strengths I can actually defend/i.test(strengths.text), strengths.text);
+  assert(strengths.memory.lastProject == null, strengths.memory.lastProject);
+
+  const role = await composeTurn('Are you Sudhanshu, SRIIVERSEAI, or something else?', createPipelineMemory(), { awarenessProject: 'queryforge' });
+  assert(role.reasoning.task === 'role_triad', role.reasoning.task);
+  assert(/not a record of personal authorship/i.test(role.text), role.text);
+  assert(/Digital Brain/i.test(role.text), role.text);
+  assert(!/engineer who builds/i.test(role.text), role.text);
+  assert(role.memory.lastProject == null, role.memory.lastProject);
+
+  const flaskMemory = createPipelineMemory();
+  const flask = await composeTurn('Compare Flask and FastAPI', flaskMemory, { awarenessProject: 'queryforge' });
+  assert(/do not establish a personal preference between Flask and FastAPI/i.test(flask.text), flask.text);
+  assert(/FastAPI/i.test(flask.text) && /Flask/i.test(flask.text), flask.text);
+  assert(!/Here's how I'd contrast|I'd contrast|FastAPI is the default|when I want/i.test(flask.text), flask.text);
+  assert(flask.memory.lastProject == null, flask.memory.lastProject);
+  const whyFlask = await composeTurn('Why?', flaskMemory, { awarenessProject: 'placementpro' });
+  assert(!/Here's how I'd contrast|I'd contrast|I'd concede|FastAPI is the default/i.test(whyFlask.text), whyFlask.text);
+
+  const concede = await composeTurn('Was Flask a bad choice?', createPipelineMemory(), { awarenessProject: 'reporadar' });
+  assert(concede.reasoning.task === 'challenge_response', concede.reasoning.task);
+  assert(/do not establish a personal default for FastAPI/i.test(concede.text), concede.text);
+  assert(/QueryForgeAI documents FastAPI/i.test(concede.text) && /Placement Pro\+ documents Flask/i.test(concede.text), concede.text);
+  assert(!/I'd concede|I still defend/i.test(concede.text), concede.text);
+  assert(concede.memory.lastProject == null, concede.memory.lastProject);
+
+  const review = await composeTurn('How do you handle code review feedback?', createPipelineMemory(), { awarenessProject: 'queryforge' });
+  assert(review.reasoning.task === 'self_behavioral', review.reasoning.task);
+  assert(/do not establish a code-review practice/i.test(review.text), review.text);
+  assert(!/I'd review/i.test(review.text), review.text);
+
+  const incident = await composeTurn('What failed in production?', createPipelineMemory(), { awarenessProject: 'placementpro' });
+  assert(incident.reasoning.task === 'ops_story', incident.reasoning.task);
+  assert(/do not establish a production incident/i.test(incident.text), incident.text);
+  assert(!/I'd expect/i.test(incident.text), incident.text);
+
+  const opinion = await composeTurn('What do you think of microservices?', createPipelineMemory(), { awarenessProject: 'queryforge' });
+  assert(opinion.reasoning.task === 'opinion_take', opinion.reasoning.task);
+  assert(/do not establish a personal view of microservices/i.test(opinion.text), opinion.text);
+  assert(!/I'd split|Overrated/i.test(opinion.text), opinion.text);
+
+  const modes = await composeTurn('What are the failure modes?', createPipelineMemory(), { awarenessProject: 'reporadar' });
+  assert(modes.reasoning.task === 'probe_failure_modes', modes.reasoning.task);
+  assert(/do not establish personal failure-mode worries/i.test(modes.text), modes.text);
+  assert(!/I'd worry|I'd expect/i.test(modes.text), modes.text);
+  assert(/does not connect to a live database/i.test(modes.text), modes.text);
 });
 
 test('a short follow-up does not resolve a pending project or invent one', async () => {

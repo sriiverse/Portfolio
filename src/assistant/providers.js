@@ -29,6 +29,7 @@ import {
   DECISION_FIRST_STRATEGIES,
   isEngineeringDetailQuery,
   isIncidentalProjectMention,
+  taskAvoidsProjectSelection,
 } from './reasoning.js';
 import { classifyAnswerAspect, findExplicitProjects, wantsDirectAnswerOnly } from './conversation.js';
 import { isQueryForgeQuery, matchQueryForgeFacet } from './queryforgeKnowledge.js';
@@ -391,9 +392,9 @@ const LocalProvider = {
     const [a, b] = entry.techs;
     const evidenceLines = this._renderTechEvidence(entry);
     const text = [
-      entry.preference,
+      `The records do not establish a personal preference between ${a} and ${b}. I will not choose one.`,
       ``,
-      `I can see why someone would argue for either ${a} or ${b} — the trade-offs are real.`,
+      `The rows below describe the frameworks. They are not a record of a personal choice.`,
       ``,
       entry.dimensions.slice(0, 3).map((d) => `- **${d.name}** — ${a}: ${d.a} · ${b}: ${d.b}`).join('\n'),
       entry.groundingNote ? `\n${entry.groundingNote}` : '',
@@ -1027,7 +1028,7 @@ const LocalProvider = {
       ...(intelligenceIntent ? { _portfolioIntelligence: intelligenceIntent } : {}),
       ...(reasoningMeta ? { _reasoningStrategy: reasoningMeta } : {}),
     });
-    if (['why_hire', 'demo_ai', 'engineer_type', 'arch_why', 'keep_two', 'best_engineering'].includes(classification?.task)) {
+    if (taskAvoidsProjectSelection(classification?.task)) {
       delete payload.project;
     }
 
@@ -1043,7 +1044,7 @@ const LocalProvider = {
     const task = classification?.task;
     if (!task || task === 'compare_passthrough') return;
     // A clarification lists project names as options. That is not a selection.
-    if (task === 'why_clarify' || task === 'tech_mention' || task === 'portfolio_history' || task === 'stack_membership' || task === 'concept_record' || task === 'concept_alias' || task === 'eval_rest_apis' || task === 'why_postgres' || task === 'database_strength' || task === 'why_hire' || task === 'demo_ai' || task === 'engineer_type' || task === 'arch_why' || task === 'keep_two' || task === 'best_engineering') return;
+    if (task === 'why_clarify' || task === 'tech_mention' || task === 'portfolio_history' || task === 'stack_membership' || task === 'concept_record' || task === 'concept_alias' || task === 'eval_rest_apis' || task === 'why_postgres' || task === 'database_strength' || taskAvoidsProjectSelection(task)) return;
     if (task === 'context_clarify') {
       if (typeof memory.bindConversationState === 'function') {
         memory.bindConversationState({
@@ -1261,7 +1262,7 @@ const LocalProvider = {
       if (i !== 0) return p;
       // "Comparing X and Y:" → spoken contrast lead (same entities, no new claims).
       const m = /^(?:\*\*)?Comparing\s+(.+?)\s+and\s+(.+?):?(?:\*\*)?\s*$/i.exec(p.trim());
-      if (m) return `Here's how I'd contrast ${m[1].trim()} and ${m[2].trim()}:`;
+      if (m) return `The records do not establish a personal preference between ${m[1].trim()} and ${m[2].trim()}. I will not choose one.`;
       return this._softenDocumentaryLead(p, { preferGone: false });
     });
     const invite = this._inviteFor(plan, ctx, 'Compare');
@@ -1390,7 +1391,7 @@ const LocalProvider = {
       || task === 'queryforge_detail' || task === 'queryforge_unknown'
       || task === 'placementpro_detail' || task === 'placementpro_unknown'
       || task === 'reporadar_detail' || task === 'reporadar_unknown'
-      || task === 'portfolio_history' || task === 'stack_membership' || task === 'concept_record' || task === 'concept_alias' || task === 'tech_mention' || task === 'project_stack_evidence' || task === 'project_alias_record' || task === 'eval_rest_apis' || task === 'why_postgres' || task === 'database_strength' || task === 'backend_vs_frontend' || task === 'startup_fit' || task === 'backend_team_fit' || task === 'product_oriented' || task === 'best_role' || task === 'production_ready' || task === 'scalable_backend' || task === 'strongest_decision' || task === 'demo_frontend' || task === 'demo_backend' || task === 'why_hire' || task === 'demo_ai' || task === 'engineer_type' || task === 'keep_two' || task === 'best_engineering' || task === 'justify_best_project') {
+      || task === 'portfolio_history' || task === 'stack_membership' || task === 'concept_record' || task === 'concept_alias' || task === 'tech_mention' || task === 'project_stack_evidence' || task === 'project_alias_record' || task === 'eval_rest_apis' || task === 'why_postgres' || task === 'database_strength' || task === 'backend_vs_frontend' || task === 'startup_fit' || task === 'backend_team_fit' || task === 'product_oriented' || task === 'best_role' || task === 'production_ready' || task === 'scalable_backend' || task === 'strongest_decision' || task === 'demo_frontend' || task === 'demo_backend' || task === 'why_hire' || task === 'demo_ai' || task === 'engineer_type' || task === 'keep_two' || task === 'best_engineering' || task === 'justify_best_project' || task === 'arch_tradeoffs' || task === 'arch_scale' || task === 'design_philosophy' || task === 'learn_next' || task === 'faang_interview' || task === 'interview_first' || task === 'recruiter_impress' || task === 'best_work'       || task === 'most_difficult' || task === 'followup_why_pick' || taskAvoidsProjectSelection(task)) {
       return null;
     }
     // Don't bolt navigation/CTAs onto short identity / brand / beyond-resume answers
@@ -1771,9 +1772,13 @@ const LocalProvider = {
    *  produce; sources are the real shipped-project evidence for the pair,
    *  looked up the same way `_techEvidenceSources` always has. */
   _renderComparisonBlock(block) {
-    const { entities = [], dimensions = [], verdict } = block.data || {};
+    const { entities = [], dimensions = [] } = block.data || {};
     if (entities.length !== 2 || !dimensions.length) {
-      return { fragment: verdict || '', sourcesForBlock: [] };
+      const [left, right] = entities;
+      const fragment = left && right
+        ? `The records do not establish a personal preference between ${left} and ${right}. I will not choose one.`
+        : 'The records do not establish a personal preference for that pair. I will not choose one.';
+      return { fragment, sourcesForBlock: [] };
     }
     const [a, b] = entities;
     const stripPrefix = (v, name) => (typeof v === 'string' ? v.replace(new RegExp(`^${name}:\\s*`), '') : v);
@@ -1782,18 +1787,10 @@ const LocalProvider = {
     const entry = TECH_TAKES.find((t) => t.techs.length === entities.length && t.techs.every((x) => entities.includes(x)));
     const evidenceLines = entry ? this._renderTechEvidence(entry) : '';
 
-    // V4.5 Phase 2 — spoken reasoning first; table is detail, not the lead.
-    const spokenLead = verdict
-      || `I'd still contrast ${a} and ${b} from what I actually shipped — not from brand preference.`;
-    const firstDim = dimensions[0];
-    const beat = firstDim
-      ? `The interesting split is usually ${firstDim.label}: not which logo wins, but which constraints you're optimizing for.`
-      : `The interesting split is which constraints you're optimizing for.`;
+    const spokenLead = `These rows describe ${a} and ${b}. They are framework characteristics, not a record of a personal choice.`;
 
     const fragment = [
       spokenLead,
-      ``,
-      beat,
       ``,
       `If you want the full side-by-side, here are the dimensions:`,
       ``,

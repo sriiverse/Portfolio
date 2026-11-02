@@ -574,6 +574,13 @@ function isContextualFollowUp(query) {
  * follow-one — unnamed follow-up keeps a single lastProject
  * none — leave the query unchanged
  */
+/** A new portfolio question is not a follow-up to the open comparison. */
+function isSelfContainedPortfolioQuestion(query) {
+  const t = followUpRemainder(query);
+  return /\b(weakest|weak area|biggest weakness|his strengths|your strengths|what can you do|what do you do|code review|failure modes?|microservices|bad choice|what failed)\b/i.test(t)
+    || /\bare you sudhanshu\b/i.test(t);
+}
+
 export function classifyContextAttachment(query, { lastProject = null, projectIds = [] } = {}) {
   const explicit = findExplicitProjects(query);
   const bound = (Array.isArray(projectIds) ? projectIds : []).filter(Boolean);
@@ -582,6 +589,7 @@ export function classifyContextAttachment(query, { lastProject = null, projectId
   const compares = /\b(compare|compared|comparison|vs\.?|versus|difference between|differ(?:s|ed)?|different from|architecturally)\b/i.test(String(query || ''));
   if (compares && lastProject && explicit.length >= 2 && explicit.some((project) => project.id === lastProject)) return 'expand';
   if (explicit.length) return 'explicit';
+  if (isSelfContainedPortfolioQuestion(query)) return 'none';
   if (!isContextualFollowUp(query)) return 'none';
   if (bound.length >= 2) return 'follow-set';
   if (lastProject) return 'follow-one';

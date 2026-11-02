@@ -15,6 +15,7 @@ import {
   WELCOME_VARIANTS,
 } from './persona.js';
 import { classifyAnswerAspect, isBoundFollowUpQuery, wantsDirectAnswerOnly } from './conversation.js';
+import { taskAvoidsProjectSelection } from './reasoning.js';
 
 export const MODE_IDS = Object.freeze([
   'recruiter', 'engineer', 'founder', 'student', 'default',
@@ -139,6 +140,9 @@ function visitorTurns(memory, limit) {
 
 function buildContinuityLead(ctx, topic) {
   if (!topic) return null;
+  const task = String(ctx?.payload?._portfolioIntelligence || ctx?.payload?._reasoningStrategy?.task || '');
+  // A record-boundary answer is not a choice of the project named earlier.
+  if (taskAvoidsProjectSelection(task)) return null;
   const visitors = visitorTurns(ctx.memory, 4);
   // Need a prior visitor turn. The assistant's own clarification is not one.
   if (visitors.length < 2) return null;
@@ -299,7 +303,7 @@ export function pickContextualInvite(ctx = {}, move = 'Answer') {
     || task === 'queryforge_detail' || task === 'queryforge_unknown'
     || task === 'placementpro_detail' || task === 'placementpro_unknown'
     || task === 'reporadar_detail' || task === 'reporadar_unknown'
-      || task === 'portfolio_history' || task === 'stack_membership' || task === 'concept_record' || task === 'concept_alias' || task === 'tech_mention' || task === 'project_stack_evidence' || task === 'project_alias_record' || task === 'eval_rest_apis' || task === 'why_postgres' || task === 'database_strength' || task === 'backend_vs_frontend' || task === 'startup_fit' || task === 'backend_team_fit' || task === 'product_oriented' || task === 'best_role' || task === 'production_ready' || task === 'scalable_backend' || task === 'strongest_decision' || task === 'demo_frontend' || task === 'demo_backend' || task === 'why_hire' || task === 'demo_ai' || task === 'engineer_type' || task === 'keep_two' || task === 'best_engineering' || task === 'justify_best_project') return null;
+      || task === 'portfolio_history' || task === 'stack_membership' || task === 'concept_record' || task === 'concept_alias' || task === 'tech_mention' || task === 'project_stack_evidence' || task === 'project_alias_record' || task === 'eval_rest_apis' || task === 'why_postgres' || task === 'database_strength' || task === 'backend_vs_frontend' || task === 'startup_fit' || task === 'backend_team_fit' || task === 'product_oriented' || task === 'best_role' || task === 'production_ready' || task === 'scalable_backend' || task === 'strongest_decision' || task === 'demo_frontend' || task === 'demo_backend' || task === 'why_hire' || task === 'demo_ai' || task === 'engineer_type' || task === 'keep_two' || task === 'best_engineering' || task === 'justify_best_project' || task === 'arch_tradeoffs' || task === 'arch_scale' || task === 'design_philosophy' || task === 'learn_next' || task === 'faang_interview' || task === 'interview_first' || task === 'recruiter_impress' || task === 'best_work' || task === 'most_difficult' || task === 'followup_why_pick' || taskAvoidsProjectSelection(task)) return null;
   if (wantsDirectAnswerOnly(q)) return null;
 
   if (task === 'why_flask' || /\bwhy flask\b/i.test(q)) {
@@ -317,9 +321,7 @@ export function pickContextualInvite(ctx = {}, move = 'Answer') {
   if (task === 'arch_why' || task === 'arch_tradeoffs' || task === 'arch_scale') {
     return 'Want this applied to a specific project, or the Flask vs FastAPI choice inside the backend layer?';
   }
-  if (task === 'weakest_area' || task === 'learn_next') {
-    return 'Want what I would improve first, or where the strong signal actually is?';
-  }
+  if (task === 'weakest_area') return null;
   if (task === 'why_hire' || task === 'startup_fit' || task === 'best_role') {
     return modeId === 'recruiter'
       ? 'Want the strongest live demo for that fit, or the engineering deep-dive?'
@@ -622,12 +624,11 @@ function clampConversationalLength(text, maxSentences) {
 export function formatSpokenComparison(entry, { includeTable = true } = {}) {
   if (!entry?.techs?.length) return '';
   const [a, b] = entry.techs;
-  const lead = entry.preference
-    || `I'd contrast ${a} and ${b} from what I actually shipped — not from brand preference.`;
+  const lead = `The records do not establish a personal preference between ${a} and ${b}. I will not choose one.`;
   const dim = entry.dimensions?.[0];
   const beat = dim
-    ? `The interesting split is usually ${dim.name.toLowerCase()}: ${a} leans ${String(dim.a).slice(0, 90)}… while ${b} leans ${String(dim.b).slice(0, 90)}…`
-    : `The interesting split is when each one earns its complexity.`;
+    ? `These rows describe the frameworks. They are not a personal choice. ${dim.name}: ${a} — ${String(dim.a).slice(0, 90)}… ${b} — ${String(dim.b).slice(0, 90)}…`
+    : 'These rows describe the frameworks. They are not a personal choice.';
 
   const parts = [lead, beat];
   if (entry.groundingNote) parts.push(entry.groundingNote);
